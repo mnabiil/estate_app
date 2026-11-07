@@ -1,4 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Notifikasi push (Android 13+ meminta izin ke pengguna). -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <application
         android:label="Nilaya Living"
         android:name="${applicationName}"

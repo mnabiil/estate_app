@@ -63,6 +63,29 @@ tua, saudara, penyewa, lainnya) dan disetujui oleh **kepala keluarga rumah itu**
 Anggota rumah) atau pengelola. Setelah disetujui, pendaftar menjadi anggota rumah. Nama
 penghuni tidak ditampilkan ke pendaftar.
 
+## Notifikasi push
+
+Firebase Cloud Messaging, dikirim server (Cloud Functions) ke perangkat warga & anggota rumah:
+
+| Kejadian | Function | Isi |
+|---|---|---|
+| Pengumuman baru | `notifyAnnouncement` | Judul + cuplikan isi |
+| Tagihan terbit | `notifyBillCreated` | "Tagihan IPL November 2026 – Rp 250.000" |
+| Tgl 8, 09.00 WIB | `remindBills` | Pengingat jatuh tempo (tgl 10) untuk yang belum bayar |
+| Tgl 12, 09.00 WIB | `remindBills` | Tagihan lewat jatuh tempo |
+| Tagihan lunas | `notifyBillPaid` | "Pembayaran diterima" |
+
+- Token perangkat: `users/{uid}/devices/{token}` (hanya pemilik); dihapus saat logout & bila
+  sudah tidak valid. Pengiriman per pengguna, bukan topik publik.
+- Preferensi: Akun → **Notifikasi** (`users/{uid}.notifPrefs`).
+- Aplikasi terbuka: tampil sebagai banner; notifikasi diketuk membuka tab Tagihan /
+  halaman Pengumuman.
+
+**Setup iOS** (sekali): Firebase Console → Project settings → Cloud Messaging → unggah
+APNs Auth Key; di Xcode tambahkan capability *Push Notifications* dan *Background Modes →
+Remote notifications* (Info.plist sudah berisi `UIBackgroundModes`). Android tidak perlu
+langkah tambahan (izin `POST_NOTIFICATIONS` sudah ada di manifest).
+
 ## Import dari Excel
 
 Master Data → **Import dari Excel** (pengelola):
@@ -202,5 +225,4 @@ storage.rules            # Aturan akses foto (Storage)
 
 - Login OTP nomor HP (Firebase Phone Auth)
 - Pembayaran nyata via payment gateway (Midtrans, Xendit)
-- Notifikasi push (pengumuman, jatuh tempo IPL)
 - Scan QR kode tamu oleh satpam

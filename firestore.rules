@@ -56,9 +56,21 @@ service cloud.firestore {
       // Satu-satunya perubahan dari aplikasi: menandai password sementara
       // sudah diganti. Peran & perumahan hanya ditulis server.
       allow update: if signedIn() && request.auth.uid == uid
-        && onlyChanges(['mustChangePassword'])
-        && request.resource.data.mustChangePassword == false;
+        && ((onlyChanges(['mustChangePassword'])
+            && request.resource.data.mustChangePassword == false)
+          // Preferensi notifikasi push.
+          || (onlyChanges(['notifPrefs'])
+            && request.resource.data.notifPrefs is map
+            && request.resource.data.notifPrefs.keys().hasOnly(['announcements', 'bills'])));
       allow create, delete: if false;
+    }
+
+    // Token perangkat untuk notifikasi push (FCM), hanya milik sendiri.
+    match /users/{uid}/devices/{token} {
+      allow read, delete: if signedIn() && request.auth.uid == uid;
+      allow create, update: if signedIn() && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['platform', 'updatedAt'])
+        && request.resource.data.updatedAt == request.time;
     }
 
     function validName(max) {

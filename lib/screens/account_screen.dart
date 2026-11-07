@@ -4,6 +4,7 @@ import '../store.dart';
 import 'announcements_screen.dart';
 import 'household_screen.dart';
 import 'master_data_screen.dart';
+import 'notification_settings_screen.dart';
 import 'password_screen.dart';
 import 'registrations_screen.dart';
 import 'renovations_screen.dart';
@@ -106,6 +107,16 @@ class AccountScreen extends StatelessWidget {
               onTap: () => push(const RegistrationsScreen()),
             ),
           ListTile(
+            leading: const Icon(Icons.notifications_outlined),
+            title: const Text('Notifikasi'),
+            subtitle: Text([
+              if (store.notifyAnnouncements) 'Pengumuman',
+              if (store.notifyBills) 'Tagihan',
+            ].join(' & ').ifEmpty('Semua dimatikan')),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => push(const NotificationSettingsScreen()),
+          ),
+          ListTile(
             leading: const Icon(Icons.password),
             title: const Text('Ganti password'),
             trailing: const Icon(Icons.chevron_right),
@@ -139,4 +150,8 @@ class AccountScreen extends StatelessWidget {
       ),
     );
   }
+}
+
+extension on String {
+  String ifEmpty(String fallback) => isEmpty ? fallback : this;
 }

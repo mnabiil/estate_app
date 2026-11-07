@@ -11,14 +11,19 @@
  *                                    akun anggota rumah (keluarga/penyewa)
  *  - payBill             (callable)  warga membayar tagihan (SIMULASI, lihat catatan)
  *  - generateMonthlyBills (terjadwal) membuat tagihan IPL tiap tanggal 1, 01.00 WIB
+ *  - notifyAnnouncement / notifyBillCreated / notifyBillPaid (trigger Firestore)
+ *  - remindBills         (terjadwal) pengingat tagihan tgl 8 & 12, 09.00 WIB
+ *                        -> notifikasi push (FCM) ke perangkat warga
  *
  * Butuh paket Firebase "Blaze" untuk deploy.
  */
 import { initializeApp } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
-import { FieldValue, getFirestore } from "firebase-admin/firestore";
+import { FieldValue, getFirestore, QueryDocumentSnapshot } from "firebase-admin/firestore";
+import { getMessaging } from "firebase-admin/messaging";
 import { setGlobalOptions } from "firebase-functions/v2";
 import { HttpsError, onCall } from "firebase-functions/v2/https";
+import { onDocumentCreated, onDocumentUpdated } from "firebase-functions/v2/firestore";
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import { randomBytes } from "node:crypto";
 
@@ -613,3 +618,163 @@ export const removeHouseholdMember = onCall(async (req) => {
   }
   return { ok: true };
 });
+
+// ---------------------------------------------------------------------------
+// Notifikasi push (Firebase Cloud Messaging)
+// ---------------------------------------------------------------------------
+//
+// Token perangkat disimpan aplikasi di users/{uid}/devices/{token}.
+// Preferensi di users/{uid}.notifPrefs { announcements, bills } (default aktif).
+// Pengiriman per pengguna (bukan topik publik) agar info tagihan tidak bocor.
+
+type NotifKind = "announcements" | "bills";
+
+const MONTHS = [
+  "Januari", "Februari", "Maret", "April", "Mei", "Juni",
+  "Juli", "Agustus", "September", "Oktober", "November", "Desember",
+];
+
+/** "2026-11" -> "November 2026" */
+function monthLabel(period: string): string {
+  const [y, m] = period.split("-").map(Number);
+  return `${MONTHS[(m || 1) - 1]} ${y}`;
+}
+
+function rupiah(n: number): string {
+  return `Rp ${new Intl.NumberFormat("id-ID").format(n)}`;
+}
+
+/** Warga (termasuk anggota rumah) di perumahan; opsional satu rumah saja. */
+async function residentUsers(estateId: string, residentId?: string) {
+  let q = db.collection("users").where("estateId", "==", estateId).where("role", "==", "warga");
+  if (residentId) q = q.where("residentId", "==", residentId);
+  return (await q.get()).docs;
+}
+
+async function deviceTokens(users: QueryDocumentSnapshot[], kind: NotifKind) {
+  const wanted = users.filter((u) => u.get(`notifPrefs.${kind}`) !== false);
+  const lists = await Promise.all(
+    wanted.map(async (u) => (await u.ref.collection("devices").get()).docs.map((d) => d.ref)),
+  );
+  return lists.flat();
+}
+
+/** Kirim ke banyak token; token yang sudah tidak valid dihapus. */
+async function push(
+  users: QueryDocumentSnapshot[],
+  kind: NotifKind,
+  title: string,
+  body: string,
+  data: Record<string, string>,
+) {
+  const refs = await deviceTokens(users, kind);
+  for (let i = 0; i < refs.length; i += 500) {
+    const chunk = refs.slice(i, i + 500);
+    const res = await getMessaging().sendEachForMulticast({
+      tokens: chunk.map((r) => r.id),
+      notification: { title, body },
+      data,
+      android: { priority: "high" },
+      apns: { payload: { aps: { sound: "default" } } },
+    });
+    await Promise.all(
+      res.responses.map((r, j) => {
+        const code = r.error?.code ?? "";
+        if (
+          code === "messaging/registration-token-not-registered" ||
+          code === "messaging/invalid-registration-token"
+        ) {
+          return chunk[j].delete();
+        }
+        return undefined;
+      }),
+    );
+  }
+  return refs.length;
+}
+
+export const notifyAnnouncement = onDocumentCreated(
+  "estates/{estateId}/announcements/{announcementId}",
+  async (event) => {
+    const a = event.data;
+    if (!a) return;
+    const estateId = event.params.estateId;
+    const body = String(a.get("body") ?? "");
+    await push(
+      await residentUsers(estateId),
+      "announcements",
+      `📢 ${a.get("title") ?? "Pengumuman baru"}`,
+      body.length > 140 ? `${body.slice(0, 137)}…` : body,
+      { type: "announcement", estateId, id: a.id },
+    );
+  },
+);
+
+export const notifyBillCreated = onDocumentCreated(
+  "estates/{estateId}/bills/{billId}",
+  async (event) => {
+    const b = event.data;
+    if (!b || b.get("status") !== "belumBayar") return;
+    const estateId = event.params.estateId;
+    const period = String(b.get("period"));
+    await push(
+      await residentUsers(estateId, String(b.get("residentId"))),
+      "bills",
+      `Tagihan IPL ${monthLabel(period)}`,
+      `${rupiah(Number(b.get("amount")))} sudah terbit. Jatuh tempo tanggal 10.`,
+      { type: "bill", estateId, id: b.id },
+    );
+  },
+);
+
+export const notifyBillPaid = onDocumentUpdated(
+  "estates/{estateId}/bills/{billId}",
+  async (event) => {
+    const before = event.data?.before;
+    const after = event.data?.after;
+    if (!before || !after) return;
+    if (before.get("status") === "lunas" || after.get("status") !== "lunas") return;
+    const estateId = event.params.estateId;
+    await push(
+      await residentUsers(estateId, String(after.get("residentId"))),
+      "bills",
+      "Pembayaran diterima ✅",
+      `IPL ${monthLabel(String(after.get("period")))} ${rupiah(Number(after.get("amount")))} lunas. Terima kasih!`,
+      { type: "bill", estateId, id: after.id },
+    );
+  },
+);
+
+/** Tgl 8: pengingat jatuh tempo (tgl 10). Tgl 12: tagihan terlambat. */
+export const remindBills = onSchedule(
+  { schedule: "0 9 8,12 * *", timeZone: "Asia/Jakarta" },
+  async () => {
+    const now = new Date();
+    const period = jakartaMonthKey(now);
+    const day = Number(
+      new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Jakarta", day: "numeric" }).format(now),
+    );
+    const overdue = day > 10;
+    const estates = await db.collection("estates").get();
+    for (const estate of estates.docs) {
+      const unpaid = await estate.ref
+        .collection("bills")
+        .where("period", "==", period)
+        .where("status", "==", "belumBayar")
+        .get();
+      for (const bill of unpaid.docs) {
+        await push(
+          await residentUsers(estate.id, String(bill.get("residentId"))),
+          "bills",
+          overdue
+            ? `IPL ${monthLabel(period)} lewat jatuh tempo`
+            : `Pengingat: IPL ${monthLabel(period)}`,
+          overdue
+            ? `${rupiah(Number(bill.get("amount")))} belum dibayar. Mohon segera dilunasi.`
+            : `${rupiah(Number(bill.get("amount")))} jatuh tempo tanggal 10. Bayar lewat aplikasi.`,
+          { type: "bill", estateId: estate.id, id: bill.id },
+        );
+      }
+    }
+  },
+);

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
+import '../push.dart';
 import '../store.dart';
+import 'announcements_screen.dart';
 import 'account_screen.dart';
 import 'bills_screen.dart';
 import 'complaints_screen.dart';
@@ -27,6 +29,35 @@ class _HomeShellState extends State<HomeShell> {
   int _index = 0;
 
   void _goTo(int i) => setState(() => _index = i);
+
+  @override
+  void initState() {
+    super.initState();
+    PushService.instance.target.addListener(_onPushTarget);
+    // Aplikasi dibuka dari notifikasi sebelum layar ini tampil.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _onPushTarget());
+  }
+
+  @override
+  void dispose() {
+    PushService.instance.target.removeListener(_onPushTarget);
+    super.dispose();
+  }
+
+  /// Notifikasi diketuk: buka tab Tagihan atau halaman Pengumuman.
+  void _onPushTarget() {
+    final t = PushService.instance.target.value;
+    if (t == null || !mounted) return;
+    PushService.instance.target.value = null;
+    switch (t) {
+      case PushTarget.bills:
+        Navigator.of(context).popUntil((r) => r.isFirst);
+        _goTo(1);
+      case PushTarget.announcements:
+        Navigator.of(context).push(MaterialPageRoute(
+            builder: (_) => const AnnouncementsScreen()));
+    }
+  }
 
   @override
   Widget build(BuildContext context) {

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import 'firebase_options.dart';
 import 'models.dart';
+import 'push.dart';
 import 'screens/home_shell.dart';
 import 'screens/login_screen.dart';
 import 'screens/password_screen.dart';
@@ -30,6 +31,8 @@ class EstateApp extends StatelessWidget {
     return MaterialApp(
       title: 'Nilaya Living',
       debugShowCheckedModeBanner: false,
+      // Banner notifikasi push saat aplikasi terbuka.
+      scaffoldMessengerKey: PushService.instance.messengerKey,
       theme: buildTheme(Brightness.light),
       darkTheme: buildTheme(Brightness.dark),
       home: ListenableBuilder(

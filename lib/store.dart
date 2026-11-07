@@ -10,6 +10,7 @@ import 'package:image_picker/image_picker.dart';
 
 import 'import_plan.dart';
 import 'models.dart';
+import 'push.dart';
 import 'utils.dart';
 
 /// Satu-satunya sumber data aplikasi.
@@ -65,6 +66,10 @@ class EstateStore extends ChangeNotifier {
 
   /// Perumahan menerima pendaftaran warga mandiri.
   bool registrationOpen = true;
+
+  /// Preferensi notifikasi push akun ini.
+  bool notifyAnnouncements = true;
+  bool notifyBills = true;
   final List<RenovationLog> renovationLogs = [];
 
   // Master perumahan.
@@ -164,6 +169,9 @@ class EstateStore extends ChangeNotifier {
     }
     _estateId = ids.first;
     final relation = d['relation'] as String?;
+    final prefs = (d['notifPrefs'] as Map<String, dynamic>?) ?? const {};
+    notifyAnnouncements = prefs['announcements'] != false;
+    notifyBills = prefs['bills'] != false;
     currentUser = AppUser(
       name: d['name'] as String? ?? '',
       role: role,
@@ -181,6 +189,8 @@ class EstateStore extends ChangeNotifier {
     }
     _listen();
     notifyListeners();
+    // Notifikasi push (izin & token perangkat) tanpa menahan login.
+    unawaited(PushService.instance.register(uid));
   }
 
   /// Pendaftar: pantau pendaftaran & profil. Saat disetujui (peran berubah
@@ -389,6 +399,8 @@ class EstateStore extends ChangeNotifier {
     _demoRegistrantId = null;
     _lastPassword = null;
     if (isFirebase) {
+      // Perangkat ini berhenti menerima notifikasi akun yang keluar.
+      await PushService.instance.unregister();
       _cancelSubs();
       _cancelProfileSubs();
       for (final s in _estateSubs) {
@@ -937,6 +949,21 @@ class EstateStore extends ChangeNotifier {
       'estateId': _estateId,
       'uid': memberId,
     });
+  }
+
+  // ---------- Notifikasi ----------
+
+  Future<void> setNotificationPrefs({bool? announcements, bool? bills}) async {
+    final a = announcements ?? notifyAnnouncements;
+    final b = bills ?? notifyBills;
+    if (isFirebase) {
+      await _db!.collection('users').doc(_auth!.currentUser!.uid).update({
+        'notifPrefs': {'announcements': a, 'bills': b},
+      });
+    }
+    notifyAnnouncements = a;
+    notifyBills = b;
+    notifyListeners();
   }
 
   // ---------- Password ----------
