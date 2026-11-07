@@ -9,7 +9,7 @@ Dua peran: **Warga** dan **Pengelola**. Data masih contoh (in-memory), belum ada
 |---|---|---|
 | Beranda (ringkasan) | Tagihan, keluhan, tamu hari ini | Jumlah warga, tunggakan, keluhan aktif, tamu |
 | Tagihan IPL | Lihat & bayar (simulasi VA/QRIS/e-wallet) | Lihat semua, tandai lunas (tunai), buat tagihan bulan ini |
-| Keluhan | Buat & pantau status | Lihat semua, ubah status (Baru/Diproses/Selesai) |
+| Keluhan | Buat (dengan foto, maks. 3) & pantau status | Lihat semua, ubah status (Baru/Diproses/Selesai) |
 | Tamu | Daftarkan tamu → dapat kode akses 6 digit | Log tamu, check-in |
 | Pengumuman | Baca | Buat pengumuman |
 | Data warga | — | Cari, tambah, lihat riwayat IPL |
@@ -43,6 +43,7 @@ Aplikasi otomatis memilih mode:
    - **Authentication** → Sign-in method → aktifkan **Email/Password**.
    - **Firestore Database** → Create database → lokasi **asia-southeast2 (Jakarta)** → mode *production*.
    - Untuk Cloud Functions: upgrade ke paket **Blaze** (bayar sesuai pemakaian).
+   - **Storage** → Get started (untuk foto keluhan).
 2. Pasang alat CLI (butuh [Node.js LTS](https://nodejs.org)):
    ```bash
    npm install -g firebase-tools
@@ -56,7 +57,7 @@ Aplikasi otomatis memilih mode:
 4. Deploy aturan keamanan & functions:
    ```bash
    cd functions && npm install && cd ..
-   firebase deploy --only firestore:rules,functions
+   firebase deploy --only firestore:rules,storage,functions
    ```
 5. **Buat pengelola pertama** (sekali saja, lewat Console):
    - Authentication → Add user → email & password pengelola. Salin **User UID**-nya.
@@ -74,14 +75,18 @@ users/{uid}                      { estateId, role, residentId?, name }
 estates/{estateId}               { name, monthlyFee }
   residents/{residentId}         { name, houseNo, phone, email, uid }
   bills/{residentId_YYYY-MM}     { residentId, period, amount, status, paidAt, method }
-  complaints/{id}                { residentId, title, description, category, status, createdAt }
+  complaints/{id}                { residentId, title, description, category, status, photoUrls, createdAt }
   visitors/{id}                  { residentId, name, purpose, visitDate, code, checkedInAt }
   announcements/{id}             { title, body, createdAt }
 ```
 
+Foto keluhan di Firebase Storage: `estates/{estateId}/complaints/{residentId}/{complaintId}/{0-2}.jpg`.
+
 ### Keamanan
 
 - `firestore.rules`: warga hanya bisa membaca datanya sendiri; profil & peran tidak bisa diubah dari aplikasi.
+- `storage.rules`: warga hanya bisa mengunggah foto keluhan ke foldernya sendiri (gambar, maks. 5 MB);
+  foto hanya bisa dilihat pemiliknya & pengelola.
 - Status **lunas** dari warga hanya diubah server (`payBill`). Saat ini `payBill` masih
   **simulasi** (`functions/.env` → `PAYMENT_SIMULATION=true`). Matikan sebelum rilis dan ganti
   dengan payment gateway.
@@ -100,6 +105,7 @@ lib/
   screens/               # Satu file per layar
 functions/src/index.ts   # Cloud Functions
 firestore.rules          # Aturan akses database
+storage.rules            # Aturan akses foto (Storage)
 ```
 
 ## Langkah berikutnya
@@ -107,4 +113,4 @@ firestore.rules          # Aturan akses database
 - Login OTP nomor HP (Firebase Phone Auth)
 - Pembayaran nyata via payment gateway (Midtrans, Xendit)
 - Notifikasi push (pengumuman, jatuh tempo IPL)
-- Scan QR kode tamu oleh satpam, upload foto keluhan
+- Scan QR kode tamu oleh satpam

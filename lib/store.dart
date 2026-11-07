@@ -4,7 +4,9 @@ import 'dart:math';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/foundation.dart';
+import 'package:image_picker/image_picker.dart';
 
 import 'models.dart';
 
@@ -48,6 +50,7 @@ class EstateStore extends ChangeNotifier {
   FirebaseFirestore? _db;
   FirebaseAuth? _auth;
   FirebaseFunctions? _fn;
+  FirebaseStorage? _storage;
   String? _estateId;
   final List<StreamSubscription<dynamic>> _subs = [];
 
@@ -61,6 +64,7 @@ class EstateStore extends ChangeNotifier {
     _db = FirebaseFirestore.instance;
     _auth = FirebaseAuth.instance;
     _fn = FirebaseFunctions.instanceFor(region: firebaseRegion);
+    _storage = FirebaseStorage.instance;
     _clearData();
     estateName = 'Griya Kita';
 
@@ -307,8 +311,15 @@ class EstateStore extends ChangeNotifier {
   // ---------- Keluhan ----------
 
   Future<void> addComplaint(
-      String title, String description, String category) async {
+    String title,
+    String description,
+    String category, {
+    List<XFile> photos = const [],
+  }) async {
     final rid = currentUser!.residentId!;
+    if (photos.length > maxComplaintPhotos) {
+      throw ArgumentError('Maksimal $maxComplaintPhotos foto');
+    }
     if (!isFirebase) {
       complaints.add(Complaint(
         id: _newId('K'),
@@ -317,18 +328,39 @@ class EstateStore extends ChangeNotifier {
         description: description,
         category: category,
         createdAt: DateTime.now(),
+        photos: photos.map((p) => p.path).toList(),
       ));
       notifyListeners();
       return;
     }
-    await _est.collection('complaints').add({
+    // ID dokumen dibuat dulu supaya foto bisa disimpan di folder keluhan ini.
+    final doc = _est.collection('complaints').doc();
+    final urls = <String>[];
+    for (var i = 0; i < photos.length; i++) {
+      urls.add(await _uploadComplaintPhoto(rid, doc.id, i, photos[i]));
+    }
+    await doc.set({
       'residentId': rid,
       'title': title,
       'description': description,
       'category': category,
       'status': ComplaintStatus.baru.name,
+      'photoUrls': urls,
       'createdAt': FieldValue.serverTimestamp(),
     });
+  }
+
+  /// Path: estates/{estateId}/complaints/{residentId}/{complaintId}/{n}.jpg
+  /// (lihat storage.rules).
+  Future<String> _uploadComplaintPhoto(
+      String residentId, String complaintId, int index, XFile file) async {
+    final ref = _storage!.ref(
+        'estates/$_estateId/complaints/$residentId/$complaintId/$index.jpg');
+    await ref.putData(
+      await file.readAsBytes(),
+      SettableMetadata(contentType: 'image/jpeg'),
+    );
+    return ref.getDownloadURL();
   }
 
   Future<void> updateComplaintStatus(String id, ComplaintStatus status) async {

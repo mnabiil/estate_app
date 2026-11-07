@@ -76,7 +76,10 @@ service cloud.firestore {
           && request.resource.data.status == 'baru'
           && request.resource.data.title is string
           && request.resource.data.title.size() <= 120
-          && request.resource.data.description.size() <= 2000;
+          && request.resource.data.description.size() <= 2000
+          && (!('photoUrls' in request.resource.data)
+            || (request.resource.data.photoUrls is list
+              && request.resource.data.photoUrls.size() <= 3));
         allow update: if isAdmin(estateId)
           && onlyChanges(['status'])
           && request.resource.data.status in ['baru', 'diproses', 'selesai'];

@@ -1,4 +1,7 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../models.dart';
 import '../store.dart';
@@ -35,6 +38,24 @@ class _ComplaintsScreenState extends State<ComplaintsScreen> {
                   style: Theme.of(ctx).textTheme.bodySmall),
               const SizedBox(height: 16),
               Text(c.description),
+              if (c.photos.isNotEmpty) ...[
+                const SizedBox(height: 16),
+                SizedBox(
+                  height: 96,
+                  child: ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    itemCount: c.photos.length,
+                    separatorBuilder: (_, __) => const SizedBox(width: 8),
+                    itemBuilder: (_, i) => _PhotoThumb(
+                      source: c.photos[i],
+                      onTap: () => Navigator.of(ctx).push(MaterialPageRoute(
+                        builder: (_) =>
+                            _PhotoViewer(photos: c.photos, initial: i),
+                      )),
+                    ),
+                  ),
+                ),
+              ],
               const SizedBox(height: 24),
               if (store.isAdmin) ...[
                 Text('Ubah status', style: Theme.of(ctx).textTheme.labelLarge),
@@ -126,7 +147,19 @@ class _ComplaintsScreenState extends State<ComplaintsScreen> {
                             margin: const EdgeInsets.symmetric(
                                 horizontal: 16, vertical: 6),
                             child: ListTile(
-                              title: Text(c.title),
+                              title: Row(
+                                children: [
+                                  Flexible(child: Text(c.title)),
+                                  if (c.photos.isNotEmpty) ...[
+                                    const SizedBox(width: 6),
+                                    Icon(Icons.photo_camera_outlined,
+                                        size: 16,
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .outline),
+                                  ],
+                                ],
+                              ),
                               subtitle: Text(
                                 isAdmin
                                     ? '${r?.name} (${r?.houseNo}) · ${c.category}'
@@ -160,6 +193,7 @@ class _ComplaintFormScreenState extends State<ComplaintFormScreen> {
   final _title = TextEditingController();
   final _desc = TextEditingController();
   String _category = complaintCategories.first;
+  final List<XFile> _photos = [];
   bool _saving = false;
 
   @override
@@ -175,7 +209,11 @@ class _ComplaintFormScreenState extends State<ComplaintFormScreen> {
     final messenger = ScaffoldMessenger.of(context);
     try {
       await store.addComplaint(
-          _title.text.trim(), _desc.text.trim(), _category);
+        _title.text.trim(),
+        _desc.text.trim(),
+        _category,
+        photos: _photos,
+      );
       messenger.showSnackBar(
           const SnackBar(content: Text('Keluhan terkirim ke pengelola')));
       if (mounted) Navigator.pop(context);
@@ -183,6 +221,45 @@ class _ComplaintFormScreenState extends State<ComplaintFormScreen> {
       messenger
           .showSnackBar(SnackBar(content: Text('Gagal: ${describeError(e)}')));
       if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _pickPhoto() async {
+    final source = await showModalBottomSheet<ImageSource>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.photo_camera),
+              title: const Text('Ambil dari kamera'),
+              onTap: () => Navigator.pop(ctx, ImageSource.camera),
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library),
+              title: const Text('Pilih dari galeri'),
+              onTap: () => Navigator.pop(ctx, ImageSource.gallery),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (source == null) return;
+    try {
+      // Dikompres agar unggahan ringan (< 5 MB, lihat storage.rules).
+      final file = await ImagePicker().pickImage(
+        source: source,
+        maxWidth: 1600,
+        maxHeight: 1600,
+        imageQuality: 75,
+      );
+      if (file != null && mounted) setState(() => _photos.add(file));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Gagal mengambil foto: ${describeError(e)}')));
     }
   }
 
@@ -233,13 +310,134 @@ class _ComplaintFormScreenState extends State<ComplaintFormScreen> {
               ),
               validator: _required,
             ),
+            const SizedBox(height: 16),
+            Text('Foto (opsional, maks. $maxComplaintPhotos)',
+                style: Theme.of(context).textTheme.labelLarge),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (var i = 0; i < _photos.length; i++)
+                  Stack(
+                    children: [
+                      _PhotoThumb(source: _photos[i].path),
+                      Positioned(
+                        top: 2,
+                        right: 2,
+                        child: Material(
+                          color: Colors.black54,
+                          shape: const CircleBorder(),
+                          child: InkWell(
+                            customBorder: const CircleBorder(),
+                            onTap: _saving
+                                ? null
+                                : () => setState(() => _photos.removeAt(i)),
+                            child: const Padding(
+                              padding: EdgeInsets.all(4),
+                              child: Icon(Icons.close,
+                                  size: 16, color: Colors.white),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                if (_photos.length < maxComplaintPhotos)
+                  SizedBox(
+                    width: 96,
+                    height: 96,
+                    child: OutlinedButton(
+                      onPressed: _saving ? null : _pickPhoto,
+                      style: OutlinedButton.styleFrom(
+                        padding: EdgeInsets.zero,
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8)),
+                      ),
+                      child: const Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.add_a_photo_outlined),
+                          SizedBox(height: 4),
+                          Text('Tambah'),
+                        ],
+                      ),
+                    ),
+                  ),
+              ],
+            ),
             const SizedBox(height: 24),
             FilledButton.icon(
               onPressed: _saving ? null : _submit,
-              icon: const Icon(Icons.send),
-              label: const Text('Kirim'),
+              icon: _saving
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.send),
+              label: Text(_saving ? 'Mengirim...' : 'Kirim'),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Gambar dari URL (Firebase Storage) atau path file lokal (mode demo).
+Widget _photoImage(String source, {BoxFit fit = BoxFit.cover}) {
+  Widget error(BuildContext _, Object __, StackTrace? ___) =>
+      const Center(child: Icon(Icons.broken_image_outlined));
+  return source.startsWith('http')
+      ? Image.network(source, fit: fit, errorBuilder: error)
+      : Image.file(File(source), fit: fit, errorBuilder: error);
+}
+
+class _PhotoThumb extends StatelessWidget {
+  const _PhotoThumb({required this.source, this.onTap});
+
+  final String source;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(8),
+      child: SizedBox(
+        width: 96,
+        height: 96,
+        child: Material(
+          color: Theme.of(context).colorScheme.surfaceContainerHighest,
+          child: InkWell(
+            onTap: onTap,
+            child: _photoImage(source),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PhotoViewer extends StatelessWidget {
+  const _PhotoViewer({required this.photos, required this.initial});
+
+  final List<String> photos;
+  final int initial;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.black,
+        foregroundColor: Colors.white,
+      ),
+      body: PageView.builder(
+        controller: PageController(initialPage: initial),
+        itemCount: photos.length,
+        itemBuilder: (_, i) => InteractiveViewer(
+          child: Center(child: _photoImage(photos[i], fit: BoxFit.contain)),
         ),
       ),
     );

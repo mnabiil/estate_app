@@ -131,6 +131,7 @@ class Complaint {
     required this.category,
     required this.createdAt,
     this.status = ComplaintStatus.baru,
+    this.photos = const [],
   });
 
   final String id;
@@ -141,6 +142,10 @@ class Complaint {
   final DateTime createdAt;
   ComplaintStatus status;
 
+  /// Foto pendukung. Mode Firebase: URL unduhan Firebase Storage.
+  /// Mode demo: path file lokal di perangkat.
+  final List<String> photos;
+
   factory Complaint.fromMap(String id, Map<String, dynamic> m) => Complaint(
         id: id,
         residentId: m['residentId'] as String,
@@ -150,8 +155,14 @@ class Complaint {
         // createdAt bisa null sesaat sebelum server mengisi serverTimestamp.
         createdAt: _date(m['createdAt']) ?? DateTime.now(),
         status: ComplaintStatus.values.byName(m['status'] as String? ?? 'baru'),
+        photos: (m['photoUrls'] as List<dynamic>? ?? const [])
+            .whereType<String>()
+            .toList(),
       );
 }
+
+/// Batas jumlah foto per keluhan (sama dengan firestore.rules & storage.rules).
+const maxComplaintPhotos = 3;
 
 class Visitor {
   Visitor({
