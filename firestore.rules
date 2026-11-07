@@ -196,8 +196,10 @@ service cloud.firestore {
         allow create: if ownsNew(estateId)
           && request.resource.data.keys().hasOnly(['residentId', 'type',
             'description', 'contractor', 'contractorPhone', 'startDate',
-            'endDate', 'deposit', 'status', 'depositStatus', 'adminNote',
-            'createdAt'])
+            'endDate', 'deposit', 'attachments', 'status', 'depositStatus',
+            'adminNote', 'createdAt'])
+          && (request.resource.data.get('attachments', []) is list
+            && request.resource.data.get('attachments', []).size() <= 5)
           && request.resource.data.type in ['kecil', 'besar']
           && request.resource.data.deposit == requiredDeposit(request.resource.data.type)
           && request.resource.data.status == 'diajukan'
@@ -212,28 +214,42 @@ service cloud.firestore {
           && request.resource.data.endDate.matches('[0-9]{4}-[0-9]{2}-[0-9]{2}')
           && request.resource.data.endDate >= request.resource.data.startDate
           && request.resource.data.createdAt == request.time;
+        // Alur: diajukan -> disetujui -> warga bayar deposit (menunggu
+        // verifikasi) -> pengelola verifikasi (dibayar) -> selesai ->
+        // deposit dikembalikan.
         allow update: if
-          // Pengelola: proses ijin, deposit, perpanjangan, selesai.
+          // Pengelola: tinjau, verifikasi deposit, perpanjang, selesai.
           (isAdmin(estateId)
-            && onlyChanges(['status', 'depositStatus', 'depositPaidAt',
-              'depositRefund', 'depositRefundedAt', 'adminNote', 'endDate'])
+            && onlyChanges(['status', 'depositStatus', 'depositMethod',
+              'depositProofUrl', 'depositPaidAt', 'depositRefund',
+              'depositRefundedAt', 'adminNote', 'endDate'])
             && request.resource.data.status in
               ['diajukan', 'disetujui', 'ditolak', 'selesai', 'dibatalkan']
             && request.resource.data.depositStatus in
-              ['belumBayar', 'dibayar', 'dikembalikan']
+              ['belumBayar', 'menungguVerifikasi', 'dibayar', 'dikembalikan']
             && request.resource.data.endDate >= resource.data.startDate
             && request.resource.data.get('depositRefund', 0) <= resource.data.deposit)
-          // Warga: membatalkan pengajuan yang belum dibayar & belum diproses.
+          // Warga: membatalkan sebelum deposit dibayar.
           || (ownsExisting(estateId)
             && onlyChanges(['status'])
-            && resource.data.status == 'diajukan'
+            && (resource.data.status == 'diajukan'
+              || resource.data.status == 'disetujui')
             && resource.data.depositStatus == 'belumBayar'
-            && request.resource.data.status == 'dibatalkan');
+            && request.resource.data.status == 'dibatalkan')
+          // Warga: membayar deposit setelah ijin disetujui.
+          || (ownsExisting(estateId)
+            && onlyChanges(['depositStatus', 'depositMethod',
+              'depositProofUrl', 'depositSubmittedAt'])
+            && resource.data.status == 'disetujui'
+            && resource.data.depositStatus == 'belumBayar'
+            && request.resource.data.depositStatus == 'menungguVerifikasi'
+            && request.resource.data.depositMethod is string
+            && request.resource.data.depositSubmittedAt == request.time);
         allow delete: if false;
       }
 
       // Catatan barang masuk/keluar selama renovasi (pengelola/satpam atau
-      // warga pemilik), hanya saat ijin berstatus disetujui.
+      // warga pemilik), hanya saat pekerjaan berjalan.
       match /renovationLogs/{logId} {
         function renovation() {
           return get(/databases/$(database)/documents/estates/$(estateId)/renovations/$(request.resource.data.renovationId)).data;
@@ -242,8 +258,13 @@ service cloud.firestore {
         allow read: if isAdmin(estateId) || ownsExisting(estateId);
         allow create: if inEstate(estateId)
           && request.resource.data.keys().hasOnly(['renovationId', 'residentId',
-            'direction', 'item', 'quantity', 'note', 'at', 'recordedBy'])
+            'direction', 'item', 'quantity', 'note', 'photoUrls', 'at',
+            'recordedBy'])
+          // Pekerjaan berjalan: disetujui dan deposit sudah diterima.
           && renovation().status == 'disetujui'
+          && renovation().depositStatus == 'dibayar'
+          && (request.resource.data.get('photoUrls', []) is list
+            && request.resource.data.get('photoUrls', []).size() <= 3)
           && renovation().residentId == request.resource.data.residentId
           && (isAdmin(estateId) || request.resource.data.residentId == me().residentId)
           && request.resource.data.direction in ['masuk', 'keluar']

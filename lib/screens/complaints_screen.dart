@@ -1,9 +1,8 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../models.dart';
+import '../photo_widgets.dart';
 import '../store.dart';
 import '../utils.dart';
 import '../widgets.dart';
@@ -46,11 +45,11 @@ class _ComplaintsScreenState extends State<ComplaintsScreen> {
                     scrollDirection: Axis.horizontal,
                     itemCount: c.photos.length,
                     separatorBuilder: (_, __) => const SizedBox(width: 8),
-                    itemBuilder: (_, i) => _PhotoThumb(
+                    itemBuilder: (_, i) => PhotoThumb(
                       source: c.photos[i],
                       onTap: () => Navigator.of(ctx).push(MaterialPageRoute(
                         builder: (_) =>
-                            _PhotoViewer(photos: c.photos, initial: i),
+                            PhotoViewer(photos: c.photos, initial: i),
                       )),
                     ),
                   ),
@@ -225,42 +224,8 @@ class _ComplaintFormScreenState extends State<ComplaintFormScreen> {
   }
 
   Future<void> _pickPhoto() async {
-    final source = await showModalBottomSheet<ImageSource>(
-      context: context,
-      showDragHandle: true,
-      builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.photo_camera),
-              title: const Text('Ambil dari kamera'),
-              onTap: () => Navigator.pop(ctx, ImageSource.camera),
-            ),
-            ListTile(
-              leading: const Icon(Icons.photo_library),
-              title: const Text('Pilih dari galeri'),
-              onTap: () => Navigator.pop(ctx, ImageSource.gallery),
-            ),
-          ],
-        ),
-      ),
-    );
-    if (source == null) return;
-    try {
-      // Dikompres agar unggahan ringan (< 5 MB, lihat storage.rules).
-      final file = await ImagePicker().pickImage(
-        source: source,
-        maxWidth: 1600,
-        maxHeight: 1600,
-        imageQuality: 75,
-      );
-      if (file != null && mounted) setState(() => _photos.add(file));
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Gagal mengambil foto: ${describeError(e)}')));
-    }
+    final file = await pickPhoto(context);
+    if (file != null && mounted) setState(() => _photos.add(file));
   }
 
   String? _required(String? v) =>
@@ -319,7 +284,7 @@ class _ComplaintFormScreenState extends State<ComplaintFormScreen> {
                 for (var i = 0; i < _photos.length; i++)
                   Stack(
                     children: [
-                      _PhotoThumb(source: _photos[i].path),
+                      PhotoThumb(source: _photos[i].path),
                       Positioned(
                         top: 2,
                         right: 2,
@@ -384,61 +349,3 @@ class _ComplaintFormScreenState extends State<ComplaintFormScreen> {
   }
 }
 
-/// Gambar dari URL (Firebase Storage) atau path file lokal (mode demo).
-Widget _photoImage(String source, {BoxFit fit = BoxFit.cover}) {
-  Widget error(BuildContext _, Object __, StackTrace? ___) =>
-      const Center(child: Icon(Icons.broken_image_outlined));
-  return source.startsWith('http')
-      ? Image.network(source, fit: fit, errorBuilder: error)
-      : Image.file(File(source), fit: fit, errorBuilder: error);
-}
-
-class _PhotoThumb extends StatelessWidget {
-  const _PhotoThumb({required this.source, this.onTap});
-
-  final String source;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(8),
-      child: SizedBox(
-        width: 96,
-        height: 96,
-        child: Material(
-          color: Theme.of(context).colorScheme.surfaceContainerHighest,
-          child: InkWell(
-            onTap: onTap,
-            child: _photoImage(source),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _PhotoViewer extends StatelessWidget {
-  const _PhotoViewer({required this.photos, required this.initial});
-
-  final List<String> photos;
-  final int initial;
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      appBar: AppBar(
-        backgroundColor: Colors.black,
-        foregroundColor: Colors.white,
-      ),
-      body: PageView.builder(
-        controller: PageController(initialPage: initial),
-        itemCount: photos.length,
-        itemBuilder: (_, i) => InteractiveViewer(
-          child: Center(child: _photoImage(photos[i], fit: BoxFit.contain)),
-        ),
-      ),
-    );
-  }
-}

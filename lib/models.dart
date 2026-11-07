@@ -386,6 +386,7 @@ enum RenovationStatus {
 
 enum DepositStatus {
   belumBayar('Belum dibayar'),
+  menungguVerifikasi('Menunggu verifikasi'),
   dibayar('Diterima pengelola'),
   dikembalikan('Dikembalikan');
 
@@ -410,6 +411,10 @@ class Renovation {
     this.contractorPhone = '',
     this.status = RenovationStatus.diajukan,
     this.depositStatus = DepositStatus.belumBayar,
+    this.attachments = const [],
+    this.depositMethod,
+    this.depositProofUrl,
+    this.depositSubmittedAt,
     this.depositPaidAt,
     this.depositRefund,
     this.depositRefundedAt,
@@ -435,6 +440,16 @@ class Renovation {
 
   RenovationStatus status;
   DepositStatus depositStatus;
+
+  /// Lampiran pengajuan (gambar desain, denah, RAB, dll.).
+  final List<RenovationAttachment> attachments;
+
+  /// Pembayaran deposit oleh warga (setelah ijin disetujui).
+  String? depositMethod;
+
+  /// Foto bukti transfer (URL Storage, atau path lokal di mode demo).
+  String? depositProofUrl;
+  DateTime? depositSubmittedAt;
   DateTime? depositPaidAt;
 
   /// Jumlah deposit yang dikembalikan (bisa dipotong bila ada pelanggaran).
@@ -446,6 +461,16 @@ class Renovation {
 
   /// Lama pekerjaan dalam hari (inklusif).
   int get durationDays => endDate.difference(startDate).inDays + 1;
+
+  /// Pekerjaan boleh berjalan: ijin disetujui dan deposit sudah diterima.
+  bool get canWork =>
+      status == RenovationStatus.disetujui &&
+      depositStatus == DepositStatus.dibayar;
+
+  /// Disetujui tetapi deposit belum diterima pengelola.
+  bool get awaitingDeposit =>
+      status == RenovationStatus.disetujui &&
+      depositStatus != DepositStatus.dibayar;
 
   /// Hanya bermakna bila status disetujui.
   RenovationPhase phaseOn(DateTime today) {
@@ -475,6 +500,13 @@ class Renovation {
             .byName(m['status'] as String? ?? 'diajukan'),
         depositStatus: DepositStatus.values
             .byName(m['depositStatus'] as String? ?? 'belumBayar'),
+        attachments: [
+          for (final a in (m['attachments'] as List<dynamic>? ?? const []))
+            if (a is Map) RenovationAttachment.fromMap(a.cast<String, dynamic>()),
+        ],
+        depositMethod: m['depositMethod'] as String?,
+        depositProofUrl: m['depositProofUrl'] as String?,
+        depositSubmittedAt: _date(m['depositSubmittedAt']),
         depositPaidAt: _date(m['depositPaidAt']),
         depositRefund: (m['depositRefund'] as num?)?.toInt(),
         depositRefundedAt: _date(m['depositRefundedAt']),
@@ -502,6 +534,7 @@ class RenovationLog {
     required this.at,
     required this.recordedBy,
     this.note = '',
+    this.photos = const [],
   });
 
   final String id;
@@ -520,6 +553,9 @@ class RenovationLog {
   /// Nama pencatat (pengelola/satpam atau warga).
   final String recordedBy;
 
+  /// Foto barang (URL Storage, atau path lokal di mode demo).
+  final List<String> photos;
+
   factory RenovationLog.fromMap(String id, Map<String, dynamic> m) =>
       RenovationLog(
         id: id,
@@ -532,7 +568,59 @@ class RenovationLog {
         note: m['note'] as String? ?? '',
         at: _date(m['at']) ?? DateTime.now(),
         recordedBy: m['recordedBy'] as String? ?? '',
+        photos: (m['photoUrls'] as List<dynamic>? ?? const [])
+            .whereType<String>()
+            .toList(),
       );
+}
+
+/// Lampiran pengajuan renovasi.
+class RenovationAttachment {
+  const RenovationAttachment({
+    required this.name,
+    required this.url,
+    this.size = 0,
+  });
+
+  final String name;
+
+  /// URL Storage, atau path lokal di mode demo (kosong untuk data contoh).
+  final String url;
+  final int size;
+
+  bool get isImage {
+    final n = name.toLowerCase();
+    return n.endsWith('.jpg') ||
+        n.endsWith('.jpeg') ||
+        n.endsWith('.png') ||
+        n.endsWith('.webp') ||
+        n.endsWith('.heic');
+  }
+
+  Map<String, dynamic> toMap() => {'name': name, 'url': url, 'size': size};
+
+  factory RenovationAttachment.fromMap(Map<String, dynamic> m) =>
+      RenovationAttachment(
+        name: m['name'] as String? ?? 'lampiran',
+        url: m['url'] as String? ?? '',
+        size: (m['size'] as num?)?.toInt() ?? 0,
+      );
+}
+
+/// Batas lampiran & foto renovasi (sama dengan firestore/storage rules).
+const maxRenovationAttachments = 5;
+const maxAttachmentBytes = 10 * 1024 * 1024;
+const maxLogPhotos = 3;
+const allowedAttachmentExtensions = [
+  'pdf', 'jpg', 'jpeg', 'png', 'webp', 'heic', 'doc', 'docx', 'xls', 'xlsx',
+];
+
+/// "1,2 MB" / "350 KB".
+String formatFileSize(int bytes) {
+  if (bytes >= 1024 * 1024) {
+    return '${(bytes / (1024 * 1024)).toStringAsFixed(1).replaceAll('.', ',')} MB';
+  }
+  return '${(bytes / 1024).ceil()} KB';
 }
 
 /// Deposit default bila belum diatur di profil perumahan.

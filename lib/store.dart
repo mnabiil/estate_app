@@ -359,7 +359,44 @@ class EstateStore extends ChangeNotifier {
   DocumentReference<Map<String, dynamic>> _renDoc(String id) =>
       _est.collection('renovations').doc(id);
 
-  /// Warga mengajukan ijin renovasi. Deposit mengikuti jenis renovasi.
+  /// Mengunggah file ke Storage dan mengembalikan URL unduhannya.
+  Future<String> _uploadFile(String path, XFile file,
+      {String? contentType}) async {
+    final ref = _storage!.ref(path);
+    await ref.putData(
+      await file.readAsBytes(),
+      SettableMetadata(contentType: contentType ?? _mimeOf(file.name)),
+    );
+    return ref.getDownloadURL();
+  }
+
+  static String _mimeOf(String name) {
+    final n = name.toLowerCase();
+    if (n.endsWith('.pdf')) return 'application/pdf';
+    if (n.endsWith('.png')) return 'image/png';
+    if (n.endsWith('.webp')) return 'image/webp';
+    if (n.endsWith('.heic')) return 'image/heic';
+    if (n.endsWith('.jpg') || n.endsWith('.jpeg')) return 'image/jpeg';
+    if (n.endsWith('.doc')) return 'application/msword';
+    if (n.endsWith('.docx')) {
+      return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+    }
+    if (n.endsWith('.xls')) return 'application/vnd.ms-excel';
+    if (n.endsWith('.xlsx')) {
+      return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+    }
+    return 'application/octet-stream';
+  }
+
+  /// Folder Storage sebuah ijin renovasi (lihat storage.rules).
+  String _renPath(String residentId, String renovationId) =>
+      'estates/$_estateId/renovations/$residentId/$renovationId';
+
+  static String _safeName(String name) =>
+      name.replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_');
+
+  /// Warga mengajukan ijin renovasi: detail pekerjaan, jangka waktu, dan
+  /// lampiran (opsional). Deposit dibayar setelah ijin disetujui.
   Future<void> submitRenovation({
     required RenovationType type,
     required String description,
@@ -367,6 +404,7 @@ class EstateStore extends ChangeNotifier {
     String contractorPhone = '',
     required DateTime start,
     required DateTime end,
+    List<XFile> attachments = const [],
   }) async {
     final rid = currentUser?.residentId;
     if (rid == null) throw StateError('Hanya warga yang bisa mengajukan.');
@@ -379,6 +417,17 @@ class EstateStore extends ChangeNotifier {
     }
     if (renovations.any((r) => r.residentId == rid && r.isActive)) {
       throw StateError('Masih ada ijin renovasi yang aktif untuk rumah ini.');
+    }
+    if (attachments.length > maxRenovationAttachments) {
+      throw StateError('Maksimal $maxRenovationAttachments lampiran.');
+    }
+    final sizes = <int>[];
+    for (final f in attachments) {
+      final size = await f.length();
+      if (size > maxAttachmentBytes) {
+        throw StateError('${f.name} lebih dari ${formatFileSize(maxAttachmentBytes)}.');
+      }
+      sizes.add(size);
     }
     final deposit = depositFor(type);
     if (!isFirebase) {
@@ -393,11 +442,28 @@ class EstateStore extends ChangeNotifier {
         endDate: e,
         deposit: deposit,
         createdAt: DateTime.now(),
+        attachments: [
+          for (var i = 0; i < attachments.length; i++)
+            RenovationAttachment(
+                name: attachments[i].name,
+                url: attachments[i].path,
+                size: sizes[i]),
+        ],
       ));
       notifyListeners();
       return;
     }
-    await _est.collection('renovations').add({
+    // ID dibuat dulu agar lampiran tersimpan di folder ijin ini.
+    final doc = _est.collection('renovations').doc();
+    final uploaded = <Map<String, dynamic>>[];
+    for (var i = 0; i < attachments.length; i++) {
+      final f = attachments[i];
+      final url = await _uploadFile(
+          '${_renPath(rid, doc.id)}/lampiran/$i-${_safeName(f.name)}', f);
+      uploaded.add(
+          RenovationAttachment(name: f.name, url: url, size: sizes[i]).toMap());
+    }
+    await doc.set({
       'residentId': rid,
       'type': type.name,
       'description': description,
@@ -406,6 +472,7 @@ class EstateStore extends ChangeNotifier {
       'startDate': dayKey(s),
       'endDate': dayKey(e),
       'deposit': deposit,
+      'attachments': uploaded,
       'status': RenovationStatus.diajukan.name,
       'depositStatus': DepositStatus.belumBayar.name,
       'adminNote': '',
@@ -413,48 +480,27 @@ class EstateStore extends ChangeNotifier {
     });
   }
 
-  /// Warga membatalkan pengajuan yang belum diproses.
+  /// Membatalkan ijin yang belum berjalan: masih diajukan, atau sudah
+  /// disetujui tapi deposit belum dibayar. Warga pemilik atau pengelola.
   Future<void> cancelRenovation(String id) async {
     final r = _renovation(id);
-    if (r.status != RenovationStatus.diajukan) {
-      throw StateError('Hanya pengajuan yang belum diproses yang bisa dibatalkan.');
-    }
-    if (r.depositStatus == DepositStatus.dibayar) {
+    final cancellable = r.status == RenovationStatus.diajukan ||
+        (r.status == RenovationStatus.disetujui &&
+            r.depositStatus == DepositStatus.belumBayar);
+    if (!cancellable) {
       throw StateError(
-          'Deposit sudah diterima. Hubungi pengelola untuk membatalkan.');
+          'Ijin tidak bisa dibatalkan pada tahap ini. Hubungi pengelola.');
     }
     await _updateRenovation(r, {'status': RenovationStatus.dibatalkan.name},
         () => r.status = RenovationStatus.dibatalkan);
   }
 
-  /// Pengelola mencatat deposit sudah diterima.
-  Future<void> markDepositPaid(String id) async {
-    _requireAdmin();
-    final r = _renovation(id);
-    if (r.depositStatus != DepositStatus.belumBayar ||
-        r.status != RenovationStatus.diajukan) {
-      throw StateError('Deposit tidak bisa dicatat pada status ini.');
-    }
-    final now = DateTime.now();
-    await _updateRenovation(r, {
-      'depositStatus': DepositStatus.dibayar.name,
-      'depositPaidAt': FieldValue.serverTimestamp(),
-    }, () {
-      r
-        ..depositStatus = DepositStatus.dibayar
-        ..depositPaidAt = now;
-    });
-  }
-
-  /// Menyetujui ijin. Deposit wajib sudah diterima.
+  /// Pengelola menyetujui pengajuan. Setelah itu warga membayar deposit.
   Future<void> approveRenovation(String id, {String note = ''}) async {
     _requireAdmin();
     final r = _renovation(id);
     if (r.status != RenovationStatus.diajukan) {
       throw StateError('Ijin ini sudah diproses.');
-    }
-    if (r.depositStatus != DepositStatus.dibayar) {
-      throw StateError('Deposit ${formatRupiah(r.deposit)} belum diterima.');
     }
     await _updateRenovation(r, {
       'status': RenovationStatus.disetujui.name,
@@ -482,6 +528,85 @@ class EstateStore extends ChangeNotifier {
     });
   }
 
+  /// Warga membayar deposit setelah ijin disetujui, dengan bukti transfer
+  /// (opsional untuk tunai). Pengelola lalu memverifikasi.
+  Future<void> payDeposit(String id,
+      {required String method, XFile? proof}) async {
+    final r = _renovation(id);
+    if (currentUser?.residentId != r.residentId) {
+      throw StateError('Ini bukan ijin renovasi rumah Anda.');
+    }
+    if (r.status != RenovationStatus.disetujui ||
+        r.depositStatus != DepositStatus.belumBayar) {
+      throw StateError('Deposit dibayar setelah ijin disetujui.');
+    }
+    final now = DateTime.now();
+    if (!isFirebase) {
+      r
+        ..depositStatus = DepositStatus.menungguVerifikasi
+        ..depositMethod = method
+        ..depositProofUrl = proof?.path
+        ..depositSubmittedAt = now;
+      notifyListeners();
+      return;
+    }
+    final proofUrl = proof == null
+        ? null
+        : await _uploadFile(
+            '${_renPath(r.residentId, r.id)}/deposit/bukti-${now.millisecondsSinceEpoch}.jpg',
+            proof,
+            contentType: 'image/jpeg');
+    await _renDoc(r.id).update({
+      'depositStatus': DepositStatus.menungguVerifikasi.name,
+      'depositMethod': method,
+      'depositProofUrl': proofUrl,
+      'depositSubmittedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
+  /// Pengelola mengonfirmasi deposit diterima (verifikasi bukti transfer,
+  /// atau pembayaran tunai langsung). Setelah ini pekerjaan boleh dimulai.
+  Future<void> markDepositPaid(String id) async {
+    _requireAdmin();
+    final r = _renovation(id);
+    if (r.status != RenovationStatus.disetujui ||
+        r.depositStatus == DepositStatus.dibayar ||
+        r.depositStatus == DepositStatus.dikembalikan) {
+      throw StateError('Deposit dicatat setelah ijin disetujui.');
+    }
+    final now = DateTime.now();
+    final method = r.depositMethod ?? 'Tunai ke pengelola';
+    await _updateRenovation(r, {
+      'depositStatus': DepositStatus.dibayar.name,
+      'depositMethod': method,
+      'depositPaidAt': FieldValue.serverTimestamp(),
+    }, () {
+      r
+        ..depositStatus = DepositStatus.dibayar
+        ..depositMethod = method
+        ..depositPaidAt = now;
+    });
+  }
+
+  /// Bukti pembayaran tidak valid: warga diminta membayar / mengunggah ulang.
+  Future<void> rejectDepositProof(String id, String reason) async {
+    _requireAdmin();
+    final r = _renovation(id);
+    if (r.depositStatus != DepositStatus.menungguVerifikasi) {
+      throw StateError('Tidak ada pembayaran yang menunggu verifikasi.');
+    }
+    await _updateRenovation(r, {
+      'depositStatus': DepositStatus.belumBayar.name,
+      'depositProofUrl': null,
+      'adminNote': reason,
+    }, () {
+      r
+        ..depositStatus = DepositStatus.belumBayar
+        ..depositProofUrl = null
+        ..adminNote = reason;
+    });
+  }
+
   /// Memperpanjang jangka waktu pekerjaan.
   Future<void> extendRenovation(String id, DateTime newEnd) async {
     _requireAdmin();
@@ -500,8 +625,9 @@ class EstateStore extends ChangeNotifier {
   Future<void> completeRenovation(String id, {String note = ''}) async {
     _requireAdmin();
     final r = _renovation(id);
-    if (r.status != RenovationStatus.disetujui) {
-      throw StateError('Hanya renovasi yang disetujui yang bisa diselesaikan.');
+    if (!r.canWork) {
+      throw StateError(
+          'Hanya renovasi yang berjalan (deposit diterima) yang bisa diselesaikan.');
     }
     final newNote = note.isEmpty ? r.adminNote : note;
     await _updateRenovation(r, {
@@ -514,17 +640,15 @@ class EstateStore extends ChangeNotifier {
     });
   }
 
-  /// Mengembalikan deposit (penuh atau dipotong) setelah renovasi selesai,
-  /// ditolak, atau dibatalkan.
+  /// Mengembalikan deposit (penuh atau dipotong) setelah renovasi selesai.
   Future<void> refundDeposit(String id, int amount, {String note = ''}) async {
     _requireAdmin();
     final r = _renovation(id);
     if (r.depositStatus != DepositStatus.dibayar) {
       throw StateError('Deposit belum diterima atau sudah dikembalikan.');
     }
-    if (r.status == RenovationStatus.diajukan ||
-        r.status == RenovationStatus.disetujui) {
-      throw StateError('Selesaikan atau tolak renovasi dulu.');
+    if (r.isActive) {
+      throw StateError('Selesaikan renovasi dulu.');
     }
     if (amount < 0 || amount > r.deposit) {
       throw StateError('Jumlah pengembalian harus 0 – ${formatRupiah(r.deposit)}.');
@@ -555,20 +679,26 @@ class EstateStore extends ChangeNotifier {
     await _renDoc(r.id).update(data);
   }
 
-  /// Mencatat barang masuk/keluar. Hanya selama renovasi disetujui.
+  /// Mencatat barang masuk/keluar beserta foto (opsional). Hanya saat
+  /// pekerjaan berjalan: ijin disetujui dan deposit diterima.
   Future<void> addRenovationLog(
     String renovationId, {
     required LogDirection direction,
     required String item,
     required String quantity,
     String note = '',
+    List<XFile> photos = const [],
   }) async {
     final r = _renovation(renovationId);
-    if (r.status != RenovationStatus.disetujui) {
-      throw StateError('Barang hanya bisa dicatat selama renovasi berjalan.');
+    if (!r.canWork) {
+      throw StateError('Barang dicatat setelah ijin disetujui dan deposit '
+          'diterima pengelola.');
     }
     if (!isAdmin && currentUser?.residentId != r.residentId) {
       throw StateError('Ini bukan renovasi rumah Anda.');
+    }
+    if (photos.length > maxLogPhotos) {
+      throw StateError('Maksimal $maxLogPhotos foto.');
     }
     final by = currentUser?.name ?? '';
     if (!isFirebase) {
@@ -582,17 +712,26 @@ class EstateStore extends ChangeNotifier {
         note: note,
         at: DateTime.now(),
         recordedBy: by,
+        photos: photos.map((p) => p.path).toList(),
       ));
       notifyListeners();
       return;
     }
-    await _est.collection('renovationLogs').add({
+    final doc = _est.collection('renovationLogs').doc();
+    final urls = <String>[];
+    for (var i = 0; i < photos.length; i++) {
+      urls.add(await _uploadFile(
+          '${_renPath(r.residentId, r.id)}/barang/${doc.id}/$i.jpg', photos[i],
+          contentType: 'image/jpeg'));
+    }
+    await doc.set({
       'renovationId': r.id,
       'residentId': r.residentId,
       'direction': direction.name,
       'item': item,
       'quantity': quantity,
       'note': note,
+      'photoUrls': urls,
       'at': FieldValue.serverTimestamp(),
       'recordedBy': by,
     });
@@ -1224,7 +1363,8 @@ class EstateStore extends ChangeNotifier {
 
   // ---------- Data contoh (mode demo) ----------
 
-  /// Contoh ijin renovasi: satu berjalan (dengan log barang), satu menunggu.
+  /// Contoh ijin renovasi: satu berjalan (dengan log barang), satu menunggu
+  /// persetujuan (dengan lampiran), satu disetujui menunggu deposit.
   void _seedDemoRenovations() {
     final today = dateOnly(DateTime.now());
     final running = Renovation(
@@ -1240,6 +1380,7 @@ class EstateStore extends ChangeNotifier {
       createdAt: today.subtract(const Duration(days: 8)),
       status: RenovationStatus.disetujui,
       depositStatus: DepositStatus.dibayar,
+      depositMethod: 'Transfer bank',
       depositPaidAt: today.subtract(const Duration(days: 7)),
     );
     renovations.add(running);
@@ -1275,6 +1416,23 @@ class EstateStore extends ChangeNotifier {
       endDate: today.add(const Duration(days: 96)),
       deposit: depositLarge,
       createdAt: today.subtract(const Duration(days: 1)),
+      attachments: const [
+        RenovationAttachment(name: 'denah-lantai-2.pdf', url: '', size: 845000),
+        RenovationAttachment(name: 'tampak-depan.jpg', url: '', size: 1240000),
+      ],
+    ));
+    renovations.add(Renovation(
+      id: _newId('RV'),
+      residentId: 'R6',
+      type: RenovationType.kecil,
+      description: 'Pasang kanopi carport dan cat pagar.',
+      contractor: 'Pak Darto',
+      startDate: today.add(const Duration(days: 3)),
+      endDate: today.add(const Duration(days: 12)),
+      deposit: depositSmall,
+      createdAt: today.subtract(const Duration(days: 2)),
+      status: RenovationStatus.disetujui,
+      adminNote: 'Jam kerja 08.00–17.00, Minggu libur.',
     ));
   }
 

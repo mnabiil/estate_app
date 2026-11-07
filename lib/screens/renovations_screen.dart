@@ -1,6 +1,10 @@
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../models.dart';
+import '../photo_widgets.dart';
 import '../store.dart';
 import '../theme.dart';
 import '../utils.dart';
@@ -10,9 +14,11 @@ import '../widgets.dart';
 (String, Color) renovationBadge(Renovation r) {
   switch (r.status) {
     case RenovationStatus.diajukan:
-      return r.depositStatus == DepositStatus.belumBayar
-          ? ('Menunggu deposit', Colors.orange.shade700)
-          : ('Menunggu persetujuan', Colors.blue.shade600);
+      return ('Menunggu persetujuan', Colors.blue.shade600);
+    case RenovationStatus.disetujui when r.awaitingDeposit:
+      return r.depositStatus == DepositStatus.menungguVerifikasi
+          ? ('Verifikasi deposit', Colors.blue.shade600)
+          : ('Disetujui · bayar deposit', Colors.orange.shade700);
     case RenovationStatus.disetujui:
       return switch (r.phaseOn(DateTime.now())) {
         RenovationPhase.belumMulai => ('Belum mulai', Colors.blue.shade600),
@@ -213,8 +219,37 @@ class _RenovationFormScreenState extends State<RenovationFormScreen> {
   final _phone = TextEditingController();
   RenovationType _type = RenovationType.kecil;
   DateTimeRange? _range;
+  final List<(XFile, int)> _files = [];
   bool _saving = false;
   bool _agree = false;
+
+  Future<void> _addFiles() async {
+    try {
+      final picked = await FilePicker.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: allowedAttachmentExtensions,
+      );
+      for (final f in picked) {
+        if (_files.length >= maxRenovationAttachments) {
+          if (mounted) {
+            showSnack(context, 'Maksimal $maxRenovationAttachments lampiran.');
+          }
+          break;
+        }
+        final size = await f.length() ?? 0;
+        if (size > maxAttachmentBytes) {
+          if (mounted) {
+            showSnack(context,
+                '${f.name} lebih dari ${formatFileSize(maxAttachmentBytes)}.');
+          }
+          continue;
+        }
+        if (mounted) setState(() => _files.add((f.xFile, size)));
+      }
+    } catch (e) {
+      if (mounted) showSnack(context, 'Gagal memilih file: ${describeError(e)}');
+    }
+  }
 
   @override
   void dispose() {
@@ -242,7 +277,7 @@ class _RenovationFormScreenState extends State<RenovationFormScreen> {
     if (!valid || _range == null || !_agree) {
       if (_range == null) showSnack(context, 'Pilih jangka waktu pekerjaan.');
       if (_range != null && !_agree) {
-        showSnack(context, 'Setujui ketentuan deposit terlebih dahulu.');
+        showSnack(context, 'Setujui ketentuan ijin renovasi terlebih dahulu.');
       }
       return;
     }
@@ -256,8 +291,9 @@ class _RenovationFormScreenState extends State<RenovationFormScreen> {
         contractorPhone: _phone.text.trim(),
         start: _range!.start,
         end: _range!.end,
+        attachments: [for (final (f, _) in _files) f],
       ).then((_) => true),
-      success: 'Ijin renovasi diajukan. Silakan bayar deposit ke pengelola.',
+      success: 'Ijin renovasi diajukan. Tunggu persetujuan pengelola.',
     );
     if (!mounted) return;
     if (ok == true) {
@@ -300,11 +336,17 @@ class _RenovationFormScreenState extends State<RenovationFormScreen> {
               maxLines: 6,
               maxLength: 1000,
               decoration: const InputDecoration(
-                labelText: 'Uraian pekerjaan',
-                hintText: 'Contoh: ganti keramik dapur, cat ulang ruang tamu',
+                labelText: 'Detail renovasi',
+                hintText: 'Jelaskan bagian yang direnovasi, material utama, '
+                    'perkiraan jumlah pekerja, dan jam kerja.\n'
+                    'Contoh: ganti keramik dapur 12 m², cat ulang ruang tamu; '
+                    '3 pekerja, 08.00–17.00',
+                hintMaxLines: 4,
                 alignLabelWithHint: true,
               ),
-              validator: _required,
+              validator: (v) => (v == null || v.trim().length < 20)
+                  ? 'Jelaskan lebih detail (min. 20 karakter)'
+                  : null,
             ),
             const SizedBox(height: 8),
             TextFormField(
@@ -344,6 +386,45 @@ class _RenovationFormScreenState extends State<RenovationFormScreen> {
               ),
             ),
             const SizedBox(height: 16),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                      'Lampiran (opsional, maks. $maxRenovationAttachments)',
+                      style: theme.textTheme.labelLarge),
+                ),
+                TextButton.icon(
+                  onPressed: _saving ||
+                          _files.length >= maxRenovationAttachments
+                      ? null
+                      : _addFiles,
+                  icon: const Icon(Icons.attach_file),
+                  label: const Text('Tambah file'),
+                ),
+              ],
+            ),
+            Text(
+              'Gambar desain, denah, RAB, atau foto kondisi saat ini. '
+              'PDF, gambar, Word, atau Excel; maks. '
+              '${formatFileSize(maxAttachmentBytes)} per file.',
+              style: theme.textTheme.bodySmall,
+            ),
+            for (var i = 0; i < _files.length; i++)
+              Card(
+                child: ListTile(
+                  leading: Icon(_fileIcon(_files[i].$1.name)),
+                  title: Text(_files[i].$1.name,
+                      maxLines: 1, overflow: TextOverflow.ellipsis),
+                  subtitle: Text(formatFileSize(_files[i].$2)),
+                  trailing: IconButton(
+                    tooltip: 'Hapus',
+                    icon: const Icon(Icons.close),
+                    onPressed:
+                        _saving ? null : () => setState(() => _files.removeAt(i)),
+                  ),
+                ),
+              ),
+            const SizedBox(height: 16),
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
@@ -358,11 +439,12 @@ class _RenovationFormScreenState extends State<RenovationFormScreen> {
                           color: scheme.onSecondaryContainer)),
                   const SizedBox(height: 4),
                   Text(
-                    'Bayar deposit ke pengelola sebelum pekerjaan dimulai. '
-                    'Ijin disetujui setelah deposit diterima. Deposit '
-                    'dikembalikan setelah renovasi selesai, dan dapat dipotong '
-                    'bila ada kerusakan fasilitas umum, sisa material/puing, '
-                    'atau pelanggaran tata tertib.',
+                    'Pengajuan ditinjau pengelola terlebih dahulu. Setelah '
+                    'disetujui, bayar deposit lalu unggah bukti pembayaran; '
+                    'pekerjaan boleh dimulai setelah deposit diverifikasi. '
+                    'Deposit dikembalikan setelah renovasi selesai, dan dapat '
+                    'dipotong bila ada kerusakan fasilitas umum, sisa '
+                    'material/puing, atau pelanggaran tata tertib.',
                     style: TextStyle(color: scheme.onSecondaryContainer),
                   ),
                   CheckboxListTile(
@@ -591,6 +673,58 @@ class RenovationDetailScreen extends StatelessWidget {
     );
   }
 
+  Future<void> _rejectProof(BuildContext context, Renovation r) async {
+    final reason = await _promptNote(context,
+        title: 'Tolak bukti pembayaran?',
+        label: 'Alasan',
+        hint: 'Contoh: nominal tidak sesuai, bukti tidak terbaca',
+        required: true,
+        confirm: 'Tolak',
+        destructive: true);
+    if (reason == null || !context.mounted) return;
+    await runAction(context, store.rejectDepositProof(r.id, reason),
+        success: 'Warga diminta mengirim ulang pembayaran');
+  }
+
+  Future<void> _confirmCancel(BuildContext context, Renovation r) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Batalkan ijin renovasi?'),
+        content: const Text('Pengajuan yang dibatalkan tidak bisa dilanjutkan. '
+            'Ajukan ulang bila diperlukan.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Kembali')),
+          FilledButton(
+            style: FilledButton.styleFrom(
+                backgroundColor: Theme.of(ctx).colorScheme.error),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Batalkan ijin'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !context.mounted) return;
+    await runAction(context, store.cancelRenovation(r.id),
+        success: 'Ijin renovasi dibatalkan');
+  }
+
+  Future<void> _payDeposit(BuildContext context, Renovation r) async {
+    final result = await showDialog<(String, XFile?)>(
+      context: context,
+      builder: (_) => _PayDepositDialog(deposit: r.deposit),
+    );
+    if (result == null || !context.mounted) return;
+    final (method, proof) = result;
+    await runAction(
+      context,
+      store.payDeposit(r.id, method: method, proof: proof),
+      success: 'Pembayaran dikirim. Menunggu verifikasi pengelola.',
+    );
+  }
+
   Future<void> _addLog(BuildContext context, Renovation r) async {
     final result = await showDialog<_LogInput>(
       context: context,
@@ -605,6 +739,7 @@ class RenovationDetailScreen extends StatelessWidget {
         item: result.item,
         quantity: result.quantity,
         note: result.note,
+        photos: result.photos,
       ),
       success: 'Barang ${result.direction.label.toLowerCase()} dicatat',
     );
@@ -629,7 +764,8 @@ class RenovationDetailScreen extends StatelessWidget {
         final res = store.residentById(r.residentId);
         final (label, color) = renovationBadge(r);
         final logs = store.logsOf(r.id);
-        final canLog = r.status == RenovationStatus.disetujui;
+        final canLog = r.canWork;
+        final isOwner = store.currentUser?.residentId == r.residentId;
 
         return Scaffold(
           appBar: AppBar(title: Text(r.type.label)),
@@ -661,37 +797,32 @@ class RenovationDetailScreen extends StatelessWidget {
               _InfoRow(Icons.engineering_outlined, 'Kontraktor',
                   [r.contractor, if (r.contractorPhone.isNotEmpty) r.contractorPhone].join(' · ')),
               _InfoRow(Icons.event, 'Jangka waktu', _period(r)),
-              if (r.status == RenovationStatus.disetujui) _Progress(r),
+              if (r.canWork) _Progress(r),
               if (r.adminNote.isNotEmpty)
                 _InfoRow(Icons.sticky_note_2_outlined, 'Catatan pengelola',
                     r.adminNote),
+              if (r.attachments.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Text('Lampiran (${r.attachments.length})',
+                    style: theme.textTheme.labelLarge),
+                const SizedBox(height: 4),
+                for (final a in r.attachments) _AttachmentTile(a),
+              ],
               const SizedBox(height: 12),
               _DepositCard(r),
-              // ----- aksi pengelola -----
-              if (isAdmin) ...[
-                const SizedBox(height: 12),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    if (r.status == RenovationStatus.diajukan &&
-                        r.depositStatus == DepositStatus.belumBayar)
+              // ----- aksi -----
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  if (isAdmin) ...[
+                    if (r.status == RenovationStatus.diajukan) ...[
                       FilledButton.icon(
-                        onPressed: () => runAction(
-                            context, store.markDepositPaid(r.id),
-                            success: 'Deposit dicatat diterima'),
-                        icon: const Icon(Icons.payments_outlined),
-                        label: const Text('Deposit diterima'),
-                      ),
-                    if (r.status == RenovationStatus.diajukan)
-                      FilledButton.icon(
-                        onPressed: r.depositStatus == DepositStatus.dibayar
-                            ? () => _approve(context, r)
-                            : null,
+                        onPressed: () => _approve(context, r),
                         icon: const Icon(Icons.check),
                         label: const Text('Setujui'),
                       ),
-                    if (r.status == RenovationStatus.diajukan)
                       OutlinedButton.icon(
                         style: OutlinedButton.styleFrom(
                             foregroundColor: scheme.error),
@@ -699,7 +830,34 @@ class RenovationDetailScreen extends StatelessWidget {
                         icon: const Icon(Icons.close),
                         label: const Text('Tolak'),
                       ),
-                    if (r.status == RenovationStatus.disetujui) ...[
+                    ],
+                    if (r.status == RenovationStatus.disetujui &&
+                        r.depositStatus == DepositStatus.menungguVerifikasi) ...[
+                      FilledButton.icon(
+                        onPressed: () => runAction(
+                            context, store.markDepositPaid(r.id),
+                            success: 'Deposit terverifikasi. Pekerjaan boleh dimulai.'),
+                        icon: const Icon(Icons.verified_outlined),
+                        label: const Text('Verifikasi deposit'),
+                      ),
+                      OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                            foregroundColor: scheme.error),
+                        onPressed: () => _rejectProof(context, r),
+                        icon: const Icon(Icons.close),
+                        label: const Text('Tolak bukti'),
+                      ),
+                    ],
+                    if (r.status == RenovationStatus.disetujui &&
+                        r.depositStatus == DepositStatus.belumBayar)
+                      OutlinedButton.icon(
+                        onPressed: () => runAction(
+                            context, store.markDepositPaid(r.id),
+                            success: 'Deposit tunai dicatat diterima'),
+                        icon: const Icon(Icons.payments_outlined),
+                        label: const Text('Terima deposit tunai'),
+                      ),
+                    if (r.canWork) ...[
                       OutlinedButton.icon(
                         onPressed: () => _extend(context, r),
                         icon: const Icon(Icons.more_time),
@@ -711,34 +869,40 @@ class RenovationDetailScreen extends StatelessWidget {
                         label: const Text('Tandai selesai'),
                       ),
                     ],
-                    if (r.depositStatus == DepositStatus.dibayar &&
-                        !r.isActive)
+                    if (r.depositStatus == DepositStatus.dibayar && !r.isActive)
                       FilledButton.icon(
                         onPressed: () => _refund(context, r),
                         icon: const Icon(Icons.undo),
                         label: const Text('Kembalikan deposit'),
                       ),
                   ],
+                  if (!isAdmin &&
+                      isOwner &&
+                      r.status == RenovationStatus.disetujui &&
+                      r.depositStatus == DepositStatus.belumBayar)
+                    FilledButton.icon(
+                      onPressed: () => _payDeposit(context, r),
+                      icon: const Icon(Icons.payments_outlined),
+                      label: Text('Bayar deposit ${formatRupiah(r.deposit)}'),
+                    ),
+                  if ((isAdmin || isOwner) &&
+                      (r.status == RenovationStatus.diajukan ||
+                          (r.status == RenovationStatus.disetujui &&
+                              r.depositStatus == DepositStatus.belumBayar)))
+                    OutlinedButton.icon(
+                      style:
+                          OutlinedButton.styleFrom(foregroundColor: scheme.error),
+                      onPressed: () => _confirmCancel(context, r),
+                      icon: const Icon(Icons.cancel_outlined),
+                      label: Text(isAdmin ? 'Batalkan ijin' : 'Batalkan pengajuan'),
+                    ),
+                ],
+              ),
+              if (_nextStepHint(r, isAdmin) case final hint?)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text(hint, style: theme.textTheme.bodySmall),
                 ),
-                if (r.status == RenovationStatus.diajukan &&
-                    r.depositStatus == DepositStatus.belumBayar)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 8),
-                    child: Text('Ijin bisa disetujui setelah deposit diterima.',
-                        style: theme.textTheme.bodySmall),
-                  ),
-              ] else if (r.status == RenovationStatus.diajukan &&
-                  r.depositStatus == DepositStatus.belumBayar) ...[
-                const SizedBox(height: 12),
-                OutlinedButton.icon(
-                  style: OutlinedButton.styleFrom(foregroundColor: scheme.error),
-                  onPressed: () => runAction(
-                      context, store.cancelRenovation(r.id),
-                      success: 'Pengajuan dibatalkan'),
-                  icon: const Icon(Icons.cancel_outlined),
-                  label: const Text('Batalkan pengajuan'),
-                ),
-              ],
               // ----- log barang -----
               const SizedBox(height: 24),
               Row(
@@ -760,8 +924,10 @@ class RenovationDetailScreen extends StatelessWidget {
                 Text(
                   canLog
                       ? 'Belum ada catatan. Catat setiap barang/material yang '
-                          'masuk atau keluar (puing, sisa material).'
-                      : 'Catatan barang dimulai setelah ijin disetujui.',
+                          'masuk atau keluar (puing, sisa material), '
+                          'lengkap dengan fotonya.'
+                      : 'Catatan barang dimulai setelah ijin disetujui dan '
+                          'deposit diterima.',
                   style: theme.textTheme.bodySmall,
                 ),
               for (var i = 0; i < logs.length; i++) ...[
@@ -878,30 +1044,238 @@ class _DepositCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final refund = r.depositRefund ?? 0;
     final lines = <String>[
+      if (r.status == RenovationStatus.diajukan)
+        'Dibayar setelah ijin disetujui pengelola.',
+      if (r.status == RenovationStatus.disetujui &&
+          r.depositStatus == DepositStatus.belumBayar)
+        'Ijin disetujui — silakan bayar deposit.',
+      if (r.depositMethod != null) 'Metode: ${r.depositMethod}',
+      if (r.depositSubmittedAt != null &&
+          r.depositStatus == DepositStatus.menungguVerifikasi)
+        'Dikirim ${formatDate(r.depositSubmittedAt!)}',
       if (r.depositPaidAt != null) 'Diterima ${formatDate(r.depositPaidAt!)}',
       if (r.depositStatus == DepositStatus.dikembalikan)
-        'Dikembalikan ${formatRupiah(r.depositRefund ?? 0)}'
+        'Dikembalikan ${formatRupiah(refund)}'
             '${r.depositRefundedAt != null ? ' pada ${formatDate(r.depositRefundedAt!)}' : ''}'
-            '${(r.depositRefund ?? 0) < r.deposit ? ' (dipotong ${formatRupiah(r.deposit - (r.depositRefund ?? 0))})' : ''}',
-      if (r.depositStatus == DepositStatus.belumBayar)
-        'Bayar ke pengelola agar ijin dapat diproses.',
+            '${refund < r.deposit ? ' (dipotong ${formatRupiah(r.deposit - refund)})' : ''}',
     ];
+    final proof = r.depositProofUrl;
     return Card(
-      child: ListTile(
-        leading: const Icon(Icons.savings_outlined),
-        title: Text('Deposit ${formatRupiah(r.deposit)}'),
-        subtitle: Text([r.depositStatus.label, ...lines].join('\n')),
-        isThreeLine: lines.isNotEmpty,
-        trailing: Icon(
-          switch (r.depositStatus) {
-            DepositStatus.belumBayar => Icons.hourglass_empty,
-            DepositStatus.dibayar => Icons.lock_outline,
-            DepositStatus.dikembalikan => Icons.check_circle_outline,
-          },
-          color: theme.colorScheme.primary,
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: 8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.savings_outlined),
+              title: Text('Deposit ${formatRupiah(r.deposit)}'),
+              subtitle: Text([r.depositStatus.label, ...lines].join('\n')),
+              isThreeLine: lines.isNotEmpty,
+              trailing: Icon(
+                switch (r.depositStatus) {
+                  DepositStatus.belumBayar => Icons.hourglass_empty,
+                  DepositStatus.menungguVerifikasi => Icons.pending_outlined,
+                  DepositStatus.dibayar => Icons.lock_outline,
+                  DepositStatus.dikembalikan => Icons.check_circle_outline,
+                },
+                color: theme.colorScheme.primary,
+              ),
+            ),
+            if (proof != null && proof.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 4),
+                child: Row(
+                  children: [
+                    PhotoThumb(
+                      source: proof,
+                      size: 56,
+                      onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                          builder: (_) => PhotoViewer(photos: [proof]))),
+                    ),
+                    const SizedBox(width: 12),
+                    Text('Bukti pembayaran', style: theme.textTheme.bodySmall),
+                  ],
+                ),
+              ),
+          ],
         ),
       ),
+    );
+  }
+}
+
+/// Lampiran pengajuan: gambar dibuka di aplikasi, file lain di aplikasi
+/// lain (PDF viewer, dsb.).
+class _AttachmentTile extends StatelessWidget {
+  const _AttachmentTile(this.a);
+
+  final RenovationAttachment a;
+
+  Future<void> _open(BuildContext context) async {
+    if (a.url.isEmpty) {
+      showSnack(context, 'Lampiran contoh — tidak ada file untuk dibuka.');
+      return;
+    }
+    if (a.isImage) {
+      await Navigator.of(context).push(MaterialPageRoute(
+          builder: (_) => PhotoViewer(photos: [a.url])));
+      return;
+    }
+    if (!a.url.startsWith('http')) {
+      showSnack(context, 'Pratinjau dokumen tersedia di mode Firebase.');
+      return;
+    }
+    final ok = await launchUrl(Uri.parse(a.url),
+        mode: LaunchMode.externalApplication);
+    if (!ok && context.mounted) {
+      showSnack(context, 'Tidak ada aplikasi untuk membuka ${a.name}.');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: ListTile(
+        leading: Icon(_fileIcon(a.name)),
+        title: Text(a.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+        subtitle: a.size > 0 ? Text(formatFileSize(a.size)) : null,
+        trailing: const Icon(Icons.open_in_new),
+        onTap: () => _open(context),
+      ),
+    );
+  }
+}
+
+IconData _fileIcon(String name) {
+  final n = name.toLowerCase();
+  if (n.endsWith('.pdf')) return Icons.picture_as_pdf_outlined;
+  if (n.endsWith('.doc') || n.endsWith('.docx')) return Icons.description_outlined;
+  if (n.endsWith('.xls') || n.endsWith('.xlsx')) return Icons.table_chart_outlined;
+  return Icons.image_outlined;
+}
+
+/// Langkah berikutnya, agar setiap pihak tahu apa yang harus dilakukan.
+String? _nextStepHint(Renovation r, bool isAdmin) {
+  if (r.status == RenovationStatus.diajukan) {
+    return isAdmin
+        ? 'Tinjau detail & lampiran, lalu setujui atau tolak.'
+        : 'Menunggu tinjauan pengelola. Deposit dibayar setelah disetujui.';
+  }
+  if (r.status != RenovationStatus.disetujui) return null;
+  return switch (r.depositStatus) {
+    DepositStatus.belumBayar => isAdmin
+        ? 'Menunggu warga membayar deposit. Pembayaran tunai bisa langsung '
+            'dicatat.'
+        : 'Bayar deposit lalu kirim bukti pembayarannya. Pekerjaan boleh '
+            'dimulai setelah deposit diverifikasi.',
+    DepositStatus.menungguVerifikasi => isAdmin
+        ? 'Periksa bukti pembayaran, lalu verifikasi.'
+        : 'Pembayaran sedang diverifikasi pengelola.',
+    _ => null,
+  };
+}
+
+class _PayDepositDialog extends StatefulWidget {
+  const _PayDepositDialog({required this.deposit});
+
+  final int deposit;
+
+  @override
+  State<_PayDepositDialog> createState() => _PayDepositDialogState();
+}
+
+class _PayDepositDialogState extends State<_PayDepositDialog> {
+  static const _methods = ['Transfer bank', 'Tunai ke pengelola'];
+  String _method = _methods.first;
+  XFile? _proof;
+  bool _showError = false;
+
+  bool get _needsProof => _method == 'Transfer bank';
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return AlertDialog(
+      title: Text('Bayar deposit ${formatRupiah(widget.deposit)}'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text('Metode pembayaran', style: theme.textTheme.labelLarge),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              children: [
+                for (final m in _methods)
+                  ChoiceChip(
+                    label: Text(m),
+                    selected: _method == m,
+                    onSelected: (_) => setState(() {
+                      _method = m;
+                      _showError = false;
+                    }),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Text(
+              _needsProof
+                  ? 'Transfer ke rekening pengelola, lalu unggah foto bukti '
+                      'transfer.'
+                  : 'Serahkan uang tunai ke pengelola. Foto kuitansi '
+                      '(opsional).',
+              style: theme.textTheme.bodySmall,
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                if (_proof != null)
+                  RemovablePhoto(
+                    source: _proof!.path,
+                    onRemove: () => setState(() => _proof = null),
+                  )
+                else
+                  AddPhotoButton(
+                    label: _needsProof ? 'Bukti\ntransfer' : 'Kuitansi',
+                    onPressed: () async {
+                      final f = await pickPhoto(context);
+                      if (f != null && mounted) {
+                        setState(() {
+                          _proof = f;
+                          _showError = false;
+                        });
+                      }
+                    },
+                  ),
+              ],
+            ),
+            if (_showError)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text('Unggah bukti transfer',
+                    style: TextStyle(color: theme.colorScheme.error)),
+              ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Batal')),
+        FilledButton(
+          onPressed: () {
+            if (_needsProof && _proof == null) {
+              setState(() => _showError = true);
+              return;
+            }
+            Navigator.pop<(String, XFile?)>(context, (_method, _proof));
+          },
+          child: const Text('Kirim'),
+        ),
+      ],
     );
   }
 }
@@ -916,18 +1290,28 @@ class _LogTile extends StatelessWidget {
     final masuk = log.direction == LogDirection.masuk;
     final color = masuk ? AppColors.limeDark : Colors.orange.shade700;
     return Card(
-      child: ListTile(
-        leading: CircleAvatar(
-          backgroundColor: color.withValues(alpha: 0.15),
-          foregroundColor: color,
-          child: Icon(masuk ? Icons.south_west : Icons.north_east),
-        ),
-        title: Text('${log.item} · ${log.quantity}'),
-        subtitle: Text([
-          '${log.direction.label} ${formatTime(log.at)}',
-          if (log.recordedBy.isNotEmpty) 'oleh ${log.recordedBy}',
-          if (log.note.isNotEmpty) log.note,
-        ].join(' · ')),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          ListTile(
+            leading: CircleAvatar(
+              backgroundColor: color.withValues(alpha: 0.15),
+              foregroundColor: color,
+              child: Icon(masuk ? Icons.south_west : Icons.north_east),
+            ),
+            title: Text('${log.item} · ${log.quantity}'),
+            subtitle: Text([
+              '${log.direction.label} ${formatTime(log.at)}',
+              if (log.recordedBy.isNotEmpty) 'oleh ${log.recordedBy}',
+              if (log.note.isNotEmpty) log.note,
+            ].join(' · ')),
+          ),
+          if (log.photos.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(72, 0, 16, 12),
+              child: PhotoStrip(photos: log.photos, size: 64),
+            ),
+        ],
       ),
     );
   }
@@ -938,6 +1322,7 @@ typedef _LogInput = ({
   String item,
   String quantity,
   String note,
+  List<XFile> photos,
 });
 
 class _LogDialog extends StatefulWidget {
@@ -953,6 +1338,7 @@ class _LogDialogState extends State<_LogDialog> {
   final _qty = TextEditingController();
   final _note = TextEditingController();
   LogDirection _dir = LogDirection.masuk;
+  final List<XFile> _photos = [];
 
   @override
   void dispose() {
@@ -1023,6 +1409,29 @@ class _LogDialogState extends State<_LogDialog> {
                   hintText: 'Contoh: plat kendaraan, nama sopir',
                 ),
               ),
+              Text('Foto barang (opsional, maks. $maxLogPhotos)',
+                  style: Theme.of(context).textTheme.labelLarge),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (var i = 0; i < _photos.length; i++)
+                    RemovablePhoto(
+                      source: _photos[i].path,
+                      onRemove: () => setState(() => _photos.removeAt(i)),
+                    ),
+                  if (_photos.length < maxLogPhotos)
+                    AddPhotoButton(
+                      onPressed: () async {
+                        final f = await pickPhoto(context);
+                        if (f != null && mounted) {
+                          setState(() => _photos.add(f));
+                        }
+                      },
+                    ),
+                ],
+              ),
             ],
           ),
         ),
@@ -1039,6 +1448,7 @@ class _LogDialogState extends State<_LogDialog> {
                 item: _item.text.trim(),
                 quantity: _qty.text.trim(),
                 note: _note.text.trim(),
+                photos: List.of(_photos),
               ));
             }
           },

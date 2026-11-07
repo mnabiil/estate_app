@@ -16,6 +16,26 @@ service firebase.storage {
         && (me().estateId == estateId || estateId in me().get('estateIds', []));
     }
 
+    // Ijin renovasi: lampiran pengajuan, bukti deposit, foto barang.
+    // estates/{estateId}/renovations/{residentId}/{renovationId}/...
+    match /estates/{estateId}/renovations/{residentId}/{renovationId}/{allPaths=**} {
+      allow read: if request.auth != null
+        && (adminOf(estateId)
+          || (me().estateId == estateId && me().residentId == residentId));
+
+      allow create: if request.auth != null
+        && (adminOf(estateId)
+          || (me().role == 'warga'
+            && me().estateId == estateId
+            && me().residentId == residentId))
+        && request.resource.size < 10 * 1024 * 1024
+        && (request.resource.contentType.matches('image/.*')
+          || request.resource.contentType == 'application/pdf'
+          || request.resource.contentType.matches('application/(msword|vnd[.]openxmlformats-officedocument[.].*|vnd[.]ms-excel)'));
+
+      allow update, delete: if false;
+    }
+
     match /estates/{estateId}/complaints/{residentId}/{complaintId}/{fileName} {
       allow read: if request.auth != null
         && (adminOf(estateId)

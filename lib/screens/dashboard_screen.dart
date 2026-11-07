@@ -392,17 +392,14 @@ class _RenovationShortcut extends StatelessWidget {
         .where((r) => r.isActive)
         .toList();
     final now = DateTime.now();
-    final waiting =
-        mine.where((r) => r.status == RenovationStatus.diajukan).length;
+    final waiting = mine
+        .where((r) => r.status == RenovationStatus.diajukan || r.awaitingDeposit)
+        .length;
     final running = mine
-        .where((r) =>
-            r.status == RenovationStatus.disetujui &&
-            r.phaseOn(now) != RenovationPhase.terlambat)
+        .where((r) => r.canWork && r.phaseOn(now) != RenovationPhase.terlambat)
         .length;
     final late = mine
-        .where((r) =>
-            r.status == RenovationStatus.disetujui &&
-            r.phaseOn(now) == RenovationPhase.terlambat)
+        .where((r) => r.canWork && r.phaseOn(now) == RenovationPhase.terlambat)
         .length;
     final summary = [
       if (running > 0) '$running berjalan',

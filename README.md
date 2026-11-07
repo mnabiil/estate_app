@@ -14,7 +14,7 @@ Dua peran: **Warga** dan **Pengelola**. Data masih contoh (in-memory), belum ada
 | Keluhan | Buat (dengan foto, maks. 3) & pantau status | Lihat semua, ubah status (Baru/Diproses/Selesai) |
 | Tamu | Daftarkan tamu → dapat kode akses 6 digit | Log tamu, check-in |
 | Pengumuman | Baca | Buat pengumuman |
-| Ijin renovasi | Ajukan (kecil/besar, jangka waktu, kontraktor), catat barang masuk/keluar, batalkan | Terima deposit, setujui/tolak, perpanjang, tandai selesai, kembalikan deposit (bisa dipotong), catat barang masuk/keluar |
+| Ijin renovasi | Ajukan (kecil/besar, detail, jangka waktu, lampiran file); setelah disetujui bayar deposit + bukti; catat barang masuk/keluar dengan foto | Tinjau & setujui/tolak, verifikasi deposit (atau terima tunai), perpanjang, tandai selesai, kembalikan deposit (bisa dipotong), catat barang dengan foto |
 | Data warga | — | Cari, tambah (pilih rumah dari daftar), lihat riwayat IPL |
 | Master data | — | Perumahan (bisa lebih dari satu) → Cluster → Tipe rumah (LB/LT) → Blok → No. rumah (tambah nomor sekaligus per rentang) |
 
@@ -107,13 +107,20 @@ estates/{estateId}               { name, address, monthlyFee, renovationDepositS
   visitors/{id}                  { residentId, name, purpose, visitDate, code, checkedInAt }
   announcements/{id}             { title, body, createdAt }
   renovations/{id}               { residentId, type: kecil|besar, description, contractor, contractorPhone,
-                                   startDate, endDate ("YYYY-MM-DD"), deposit, status, depositStatus,
-                                   depositPaidAt, depositRefund, depositRefundedAt, adminNote, createdAt }
+                                   startDate, endDate ("YYYY-MM-DD"), deposit, attachments[{name,url,size}],
+                                   status, depositStatus, depositMethod, depositProofUrl,
+                                   depositSubmittedAt, depositPaidAt, depositRefund, depositRefundedAt,
+                                   adminNote, createdAt }
   renovationLogs/{id}            { renovationId, residentId, direction: masuk|keluar, item, quantity,
-                                   note, at, recordedBy }
+                                   note, photoUrls, at, recordedBy }
 ```
 
 Foto keluhan di Firebase Storage: `estates/{estateId}/complaints/{residentId}/{complaintId}/{0-2}.jpg`.
+File renovasi: `estates/{estateId}/renovations/{residentId}/{renovationId}/` → `lampiran/`, `deposit/`, `barang/{logId}/`.
+
+Alur ijin renovasi: **ajukan** (detail + jangka waktu + lampiran) → **disetujui** pengelola →
+warga **bayar deposit** + bukti → pengelola **verifikasi** → pekerjaan berjalan (catat barang
+masuk/keluar + foto) → **selesai** → **deposit dikembalikan**.
 
 ### Keamanan
 
