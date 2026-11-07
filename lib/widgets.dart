@@ -115,3 +115,65 @@ Future<T?> runAction<T>(BuildContext context, Future<T> action,
     return null;
   }
 }
+
+/// Pengelola: konfirmasi lalu reset password akun warga [name] (kepala
+/// keluarga [residentId], atau anggota rumah [memberUid]) dan tampilkan
+/// password sementara yang baru.
+Future<void> resetResidentPasswordFlow(
+  BuildContext context, {
+  required String name,
+  required String residentId,
+  String? memberUid,
+}) async {
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: Text('Reset password $name?'),
+      content: const Text(
+          'Password lama tidak berlaku lagi dan warga otomatis keluar dari '
+          'semua HP. Anda akan mendapat password sementara baru untuk '
+          'diberikan ke warga; warga wajib menggantinya saat login.'),
+      actions: [
+        TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Batal')),
+        FilledButton(
+          onPressed: () => Navigator.pop(ctx, true),
+          child: const Text('Reset password'),
+        ),
+      ],
+    ),
+  );
+  if (ok != true || !context.mounted) return;
+  final result = await runAction(context,
+      store.resetResidentPassword(residentId, memberUid: memberUid));
+  if (result == null || !context.mounted) return;
+  await showDialog<void>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: Text('Password $name direset'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (result.email.isNotEmpty) Text('Email: ${result.email}'),
+          const SizedBox(height: 8),
+          const Text('Password sementara baru:'),
+          SelectableText(result.tempPassword,
+              style: Theme.of(ctx)
+                  .textTheme
+                  .titleLarge
+                  ?.copyWith(fontFamily: 'monospace')),
+          const SizedBox(height: 12),
+          const Text('Catat sekarang: password ini tidak ditampilkan lagi. '
+              'Berikan ke warga secara pribadi.'),
+        ],
+      ),
+      actions: [
+        FilledButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Selesai')),
+      ],
+    ),
+  );
+}

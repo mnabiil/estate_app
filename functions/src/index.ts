@@ -9,6 +9,8 @@
  *  - approveRegistration (callable)  pengelola menyetujui pendaftaran -> akun jadi warga
  *  - addHouseholdMember / removeHouseholdMember (callable)
  *                                    akun anggota rumah (keluarga/penyewa)
+ *  - resetResidentPassword (callable) pengelola membuat password sementara baru
+ *                                    untuk warga yang lupa password
  *  - payBill             (callable)  warga membayar tagihan (SIMULASI, lihat catatan)
  *  - generateMonthlyBills (terjadwal) membuat tagihan IPL tiap tanggal 1, 01.00 WIB
  *  - notifyAnnouncement / notifyBillCreated / notifyBillPaid (trigger Firestore)
@@ -655,6 +657,69 @@ export const removeHouseholdMember = onCall(async (req) => {
     if ((e as { code?: string }).code !== "auth/user-not-found") throw e;
   }
   return { ok: true };
+});
+
+// ---------------------------------------------------------------------------
+
+/**
+ * Pengelola mereset password akun warga (kepala keluarga atau anggota rumah)
+ * yang lupa password. Membuat password sementara baru, mengeluarkan semua
+ * sesi login lama, dan mewajibkan ganti password saat login berikutnya.
+ */
+export const resetResidentPassword = onCall(async (req) => {
+  const me = await profileOf(req.auth?.uid);
+  const data = req.data ?? {};
+  const estateId = requireText(data.estateId, "estateId");
+  const residentId = requireText(data.residentId, "residentId");
+  if (!managesEstate(me, estateId)) {
+    throw new HttpsError("permission-denied", "Hanya pengelola perumahan ini yang bisa mereset password.");
+  }
+
+  const estate = db.doc(`estates/${estateId}`);
+  let uid: string | undefined;
+  if (typeof data.memberUid === "string" && data.memberUid !== "") {
+    // Anggota rumah: harus benar-benar anggota rumah ini.
+    const member = await estate.collection("members").doc(data.memberUid).get();
+    if (!member.exists || member.get("residentId") !== residentId) {
+      throw new HttpsError("not-found", "Anggota rumah tidak ditemukan.");
+    }
+    uid = member.id;
+  } else {
+    const resident = await estate.collection("residents").doc(residentId).get();
+    if (!resident.exists) throw new HttpsError("not-found", "Data warga tidak ditemukan.");
+    uid = resident.get("uid") as string | undefined;
+    if (!uid) {
+      // Data lama tanpa field uid: cari akun kepala keluarga lewat profil.
+      const users = await db
+        .collection("users")
+        .where("estateId", "==", estateId)
+        .where("residentId", "==", residentId)
+        .where("role", "==", "warga")
+        .get();
+      uid = users.docs.find((d) => d.get("householdRole") !== "anggota")?.id;
+    }
+  }
+  if (!uid) throw new HttpsError("not-found", "Warga ini belum punya akun login.");
+
+  // Hanya akun warga di perumahan ini yang boleh direset (bukan pengelola lain).
+  const profile = await db.doc(`users/${uid}`).get();
+  if (!profile.exists || profile.get("role") !== "warga" || profile.get("estateId") !== estateId) {
+    throw new HttpsError("permission-denied", "Akun ini bukan warga perumahan Anda.");
+  }
+
+  const tempPassword = randomBytes(9).toString("base64url");
+  try {
+    await getAuth().updateUser(uid, { password: tempPassword });
+  } catch (e: unknown) {
+    if ((e as { code?: string }).code === "auth/user-not-found") {
+      throw new HttpsError("not-found", "Akun login warga ini sudah tidak ada.");
+    }
+    throw e;
+  }
+  await getAuth().revokeRefreshTokens(uid);
+  await profile.ref.update({ mustChangePassword: true });
+  const user = await getAuth().getUser(uid);
+  return { email: user.email ?? "", tempPassword };
 });
 
 // ---------------------------------------------------------------------------

@@ -198,10 +198,26 @@ class HouseholdScreen extends StatelessWidget {
                       if (m.email.isNotEmpty) m.email,
                     ].join(' · ')),
                     trailing: canManage
-                        ? IconButton(
-                            tooltip: 'Hapus akses',
-                            icon: const Icon(Icons.person_remove_outlined),
-                            onPressed: () => _remove(context, m),
+                        ? Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (store.isAdmin && store.isFirebase)
+                                IconButton(
+                                  tooltip: 'Reset password',
+                                  icon: const Icon(Icons.lock_reset),
+                                  onPressed: () => resetResidentPasswordFlow(
+                                    context,
+                                    name: m.name,
+                                    residentId: residentId,
+                                    memberUid: m.id,
+                                  ),
+                                ),
+                              IconButton(
+                                tooltip: 'Hapus akses',
+                                icon: const Icon(Icons.person_remove_outlined),
+                                onPressed: () => _remove(context, m),
+                              ),
+                            ],
                           )
                         : (me?.email != null && me?.email == m.email
                             ? const Text('Anda')

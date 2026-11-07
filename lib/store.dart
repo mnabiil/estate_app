@@ -463,6 +463,32 @@ class EstateStore extends ChangeNotifier {
     return res.data['tempPassword'] as String?;
   }
 
+  /// Pengelola mereset password akun warga yang lupa password: kepala
+  /// keluarga [residentId], atau anggota rumahnya bila [memberUid] diisi.
+  /// Mengembalikan email akun dan password sementara yang baru; sesi login
+  /// lama dikeluarkan dan warga wajib mengganti password saat login.
+  Future<({String email, String tempPassword})> resetResidentPassword(
+      String residentId,
+      {String? memberUid}) async {
+    if (!isAdmin) {
+      throw StateError('Hanya pengelola yang bisa mereset password warga.');
+    }
+    if (!isFirebase) {
+      throw StateError('Reset password hanya tersedia di mode Firebase.');
+    }
+    final res = await _fn!
+        .httpsCallable('resetResidentPassword')
+        .call<Map<String, dynamic>>({
+      'estateId': _estateId,
+      'residentId': residentId,
+      if (memberUid != null) 'memberUid': memberUid,
+    });
+    return (
+      email: res.data['email'] as String? ?? '',
+      tempPassword: res.data['tempPassword'] as String,
+    );
+  }
+
   // ---------- Ijin renovasi ----------
 
   Renovation? renovationById(String id) {

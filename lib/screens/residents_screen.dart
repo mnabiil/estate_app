@@ -298,6 +298,19 @@ class _ResidentsScreenState extends State<ResidentsScreen> {
                     'Anggota rumah (${store.membersOf(r.id).length})'),
               ),
             ),
+            if (store.isFirebase)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                child: OutlinedButton.icon(
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                    resetResidentPasswordFlow(context,
+                        name: r.name, residentId: r.id);
+                  },
+                  icon: const Icon(Icons.lock_reset),
+                  label: const Text('Reset password'),
+                ),
+              ),
             const Divider(),
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),

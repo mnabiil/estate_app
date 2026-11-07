@@ -17,6 +17,19 @@ void main() {
         email: email,
       );
 
+  test('reset password warga hanya untuk pengelola, dan butuh Firebase',
+      () async {
+    s.login(Role.warga, residentId: 'R1');
+    await expectLater(s.resetResidentPassword('R1'),
+        throwsA(isA<StateError>().having((e) => e.message, 'message',
+            contains('Hanya pengelola'))));
+
+    s.login(Role.pengelola);
+    await expectLater(s.resetResidentPassword('R1'),
+        throwsA(isA<StateError>().having((e) => e.message, 'message',
+            contains('mode Firebase'))));
+  });
+
   test('data contoh: Budi (A1/05) punya anggota Ani', () {
     final members = s.membersOf('R1');
     expect(members.single.name, 'Ani Santoso');
