@@ -98,7 +98,8 @@ class MasterDataScreen extends StatelessWidget {
                         [
                           if (store.estateAddress.isNotEmpty)
                             store.estateAddress,
-                          'IPL ${formatRupiah(store.fee)}/bulan · '
+                          'IPL ${formatRupiah(store.fee)}/bulan, jatuh tempo '
+                              'tgl ${store.billDueDay} · '
                               '${store.houses.length} rumah, $occupied terisi',
                         ].join('\n'),
                         style: TextStyle(
@@ -175,6 +176,8 @@ class ClusterScreen extends StatelessWidget {
     final name = TextEditingController(text: t?.name);
     final lb = TextEditingController(text: t?.buildingArea?.toString() ?? '');
     final lt = TextEditingController(text: t?.landArea?.toString() ?? '');
+    final typeFee =
+        TextEditingController(text: t?.monthlyFee?.toString() ?? '');
     final formKey = GlobalKey<FormState>();
     String? area(String? v) {
       if (v == null || v.trim().isEmpty) return null;
@@ -229,6 +232,23 @@ class ClusterScreen extends StatelessWidget {
                     ),
                   ],
                 ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: typeFee,
+                  keyboardType: TextInputType.number,
+                  decoration: InputDecoration(
+                    labelText: 'Tarif IPL tipe ini (opsional)',
+                    prefixText: 'Rp ',
+                    helperText: 'Kosongkan = tarif perumahan '
+                        '(${formatRupiah(store.fee)})',
+                  ),
+                  validator: (v) {
+                    final t = (v ?? '').replaceAll('.', '').trim();
+                    if (t.isEmpty) return null;
+                    final n = int.tryParse(t);
+                    return (n == null || n <= 0) ? 'Isi angka > 0' : null;
+                  },
+                ),
               ],
             ),
           ),
@@ -256,6 +276,7 @@ class ClusterScreen extends StatelessWidget {
         id: t?.id,
         buildingArea: int.tryParse(lb.text.trim()),
         landArea: int.tryParse(lt.text.trim()),
+        monthlyFee: int.tryParse(typeFee.text.replaceAll('.', '').trim()),
       ),
       success: t == null ? '$n ditambahkan' : 'Tipe disimpan',
     );
@@ -357,6 +378,8 @@ class ClusterScreen extends StatelessWidget {
                   title: t.name,
                   subtitle: [
                     if (t.areaText.isNotEmpty) t.areaText,
+                    'IPL ${formatRupiah(t.monthlyFee ?? store.fee)}'
+                        '${t.monthlyFee == null ? ' (tarif perumahan)' : ''}',
                     '${store.blocksOf(clusterId, typeId: t.id).length} blok',
                   ].join(' · '),
                   onTap: () => _editType(context, t),
@@ -615,6 +638,8 @@ Future<void> editEstate(BuildContext context, {bool create = false}) async {
   final address =
       TextEditingController(text: create ? '' : store.estateAddress);
   final fee = TextEditingController(text: create ? '$monthlyFee' : '${store.fee}');
+  final dueDay = TextEditingController(
+      text: create ? '$defaultBillDueDay' : '${store.billDueDay}');
   final depSmall = TextEditingController(
       text: create ? '$defaultDepositSmall' : '${store.depositSmall}');
   final depLarge = TextEditingController(
@@ -663,8 +688,25 @@ Future<void> editEstate(BuildContext context, {bool create = false}) async {
                 decoration: const InputDecoration(
                   labelText: 'Tarif IPL per bulan',
                   prefixText: 'Rp ',
+                  helperText: 'Bisa diatur berbeda per tipe rumah',
                 ),
                 validator: positive,
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: dueDay,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Tanggal jatuh tempo IPL',
+                  prefixText: 'Tgl ',
+                  helperText: 'Setiap bulan (1–28). Pengingat dikirim H-2, '
+                      'pemberitahuan terlambat H+2.',
+                  helperMaxLines: 2,
+                ),
+                validator: (v) {
+                  final n = int.tryParse((v ?? '').trim());
+                  return (n == null || n < 1 || n > 28) ? 'Isi 1–28' : null;
+                },
               ),
               const SizedBox(height: 16),
               Align(
@@ -726,20 +768,27 @@ Future<void> editEstate(BuildContext context, {bool create = false}) async {
   final n = name.text.trim();
   final a = address.text.trim();
   final f = int.parse(fee.text.replaceAll('.', ''));
+  final due = int.parse(dueDay.text.trim());
   final ds = int.parse(depSmall.text.replaceAll('.', ''));
   final dl = int.parse(depLarge.text.replaceAll('.', ''));
   await runAction(
     context,
     create
         ? store.createEstate(
-            name: n, address: a, fee: f, depositSmall: ds, depositLarge: dl)
+            name: n,
+            address: a,
+            fee: f,
+            depositSmall: ds,
+            depositLarge: dl,
+            billDueDay: due)
         : store.updateEstate(
             name: n,
             address: a,
             fee: f,
             depositSmall: ds,
             depositLarge: dl,
-            registrationOpen: regOpen.value),
+            registrationOpen: regOpen.value,
+            billDueDay: due),
     success: create ? '$n ditambahkan & aktif' : 'Profil perumahan disimpan',
   );
 }

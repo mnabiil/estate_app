@@ -4,11 +4,15 @@
 library;
 
 class PlanType {
-  PlanType(this.cluster, this.name, this.buildingArea, this.landArea);
+  PlanType(this.cluster, this.name, this.buildingArea, this.landArea,
+      {this.monthlyFee});
   final String cluster;
   final String name;
   final int? buildingArea;
   final int? landArea;
+
+  /// Tarif IPL khusus tipe (opsional).
+  final int? monthlyFee;
 }
 
 class PlanBlock {

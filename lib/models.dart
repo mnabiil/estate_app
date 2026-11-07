@@ -163,6 +163,7 @@ class HouseType {
     required this.name,
     this.buildingArea,
     this.landArea,
+    this.monthlyFee,
   });
 
   final String id;
@@ -170,6 +171,9 @@ class HouseType {
   String name;
   int? buildingArea;
   int? landArea;
+
+  /// Tarif IPL khusus tipe ini; null = tarif perumahan.
+  int? monthlyFee;
 
   /// Mis. "LB 36 m² · LT 72 m²", kosong bila luas tidak diisi.
   String get areaText => [
@@ -183,6 +187,7 @@ class HouseType {
         name: m['name'] as String? ?? '',
         buildingArea: (m['buildingArea'] as num?)?.toInt(),
         landArea: (m['landArea'] as num?)?.toInt(),
+        monthlyFee: (m['monthlyFee'] as num?)?.toInt(),
       );
 }
 
@@ -239,7 +244,8 @@ class Bill {
     this.status = BillStatus.belumBayar,
     this.paidAt,
     this.method,
-  });
+    DateTime? dueDate,
+  }) : _due = dueDate;
 
   final String id;
   final String residentId;
@@ -251,7 +257,15 @@ class Bill {
   DateTime? paidAt;
   String? method;
 
-  DateTime get dueDate => DateTime(period.year, period.month, 10);
+  /// Jatuh tempo disimpan saat tagihan dibuat (mengikuti pengaturan
+  /// perumahan saat itu). Tagihan lama tanpa field ini: tanggal 10.
+  final DateTime? _due;
+  DateTime get dueDate => _due ?? dueDateFor(period, defaultBillDueDay);
+
+  /// Belum dibayar dan sudah melewati tanggal jatuh tempo.
+  bool isOverdueOn(DateTime now) =>
+      status == BillStatus.belumBayar &&
+      DateTime(now.year, now.month, now.day).isAfter(dueDate);
 
   /// ID dokumen deterministik agar satu warga hanya punya satu tagihan per bulan.
   static String docId(String residentId, DateTime period) =>
@@ -266,17 +280,26 @@ class Bill {
             BillStatus.values.byName(m['status'] as String? ?? 'belumBayar'),
         paidAt: _date(m['paidAt']),
         method: m['method'] as String?,
+        dueDate: m['dueDate'] is String ? parseKey(m['dueDate'] as String) : null,
       );
 
   Map<String, dynamic> toMap() => {
         'residentId': residentId,
         'period': monthKey(period),
         'amount': amount,
+        'dueDate': dayKey(dueDate),
         'status': status.name,
         'paidAt': _ts(paidAt),
         'method': method,
       };
 }
+
+/// Tanggal jatuh tempo default (bila perumahan belum mengatur).
+const defaultBillDueDay = 10;
+
+/// Jatuh tempo tagihan periode [period] pada tanggal [day] (1–28).
+DateTime dueDateFor(DateTime period, int day) =>
+    DateTime(period.year, period.month, day.clamp(1, 28));
 
 enum ComplaintStatus {
   baru('Baru'),

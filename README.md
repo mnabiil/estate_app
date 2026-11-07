@@ -63,6 +63,14 @@ tua, saudara, penyewa, lainnya) dan disetujui oleh **kepala keluarga rumah itu**
 Anggota rumah) atau pengelola. Setelah disetujui, pendaftar menjadi anggota rumah. Nama
 penghuni tidak ditampilkan ke pendaftar.
 
+## Tarif IPL & jatuh tempo
+
+Master Data → profil perumahan: **tarif IPL** perumahan dan **tanggal jatuh tempo** (1–28,
+default 10). Tarif bisa dibedakan **per tipe rumah** (form tipe rumah, opsional; kosong =
+tarif perumahan). Tagihan menyimpan nominal & tanggal jatuh temponya saat dibuat, jadi
+perubahan pengaturan hanya berlaku untuk tagihan berikutnya. Pengingat dikirim **H-2** dan
+pemberitahuan terlambat **H+2** dari tanggal jatuh tempo.
+
 ## Notifikasi push
 
 Firebase Cloud Messaging, dikirim server (Cloud Functions) ke perangkat warga & anggota rumah:
@@ -71,8 +79,8 @@ Firebase Cloud Messaging, dikirim server (Cloud Functions) ke perangkat warga & 
 |---|---|---|
 | Pengumuman baru | `notifyAnnouncement` | Judul + cuplikan isi |
 | Tagihan terbit | `notifyBillCreated` | "Tagihan IPL November 2026 – Rp 250.000" |
-| Tgl 8, 09.00 WIB | `remindBills` | Pengingat jatuh tempo (tgl 10) untuk yang belum bayar |
-| Tgl 12, 09.00 WIB | `remindBills` | Tagihan lewat jatuh tempo |
+| H-2 jatuh tempo, 09.00 WIB | `remindBills` (harian) | Pengingat untuk yang belum bayar |
+| H+2 jatuh tempo, 09.00 WIB | `remindBills` (harian) | Tagihan lewat jatuh tempo |
 | Tagihan lunas | `notifyBillPaid` | "Pembayaran diterima" |
 
 - Token perangkat: `users/{uid}/devices/{token}` (hanya pemilik); dihapus saat logout & bila
@@ -164,17 +172,18 @@ Aplikasi otomatis memilih mode:
 ```
 users/{uid}                      { estateId, estateIds?, role: warga|pengelola|pendaftar, residentId?, name,
                                    mustChangePassword?, householdRole?: anggota, relation? }
-estates/{estateId}               { name, address, monthlyFee, renovationDepositSmall, renovationDepositLarge }
+estates/{estateId}               { name, address, monthlyFee, billDueDay (1–28), renovationDepositSmall,
+                                   renovationDepositLarge, registrationOpen }
   members/{uid}                  { residentId, name, relation, phone, email, addedBy, createdAt }
   registrations/{uid}            { estateId, name, phone, email, houseId, houseNo, clusterName, occupancy,
                                    docUrl, kind: baru|gabung, relation?, residentId?,
                                    status: menunggu|disetujui|ditolak, note, createdAt, reviewedAt }
   clusters/{id}                  { name }
   blocks/{id}                    { clusterId, typeId, name }
-  houseTypes/{id}                { clusterId, name, buildingArea, landArea }
+  houseTypes/{id}                { clusterId, name, buildingArea, landArea, monthlyFee? }
   houses/{id}                    { clusterId, blockId, number }
   residents/{residentId}         { name, houseId, houseNo, phone, email, uid }
-  bills/{residentId_YYYY-MM}     { residentId, period, amount, status, paidAt, method }
+  bills/{residentId_YYYY-MM}     { residentId, period, amount, dueDate ("YYYY-MM-DD"), status, paidAt, method }
   complaints/{id}                { residentId, title, description, category, status, photoUrls, createdAt }
   visitors/{id}                  { residentId, name, purpose, visitDate, code, checkedInAt }
   announcements/{id}             { title, body, createdAt }

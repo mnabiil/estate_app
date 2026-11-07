@@ -21,6 +21,7 @@ const _rumahHeader = [
   'Tipe',
   'Luas Bangunan (m2)',
   'Luas Tanah (m2)',
+  'Tarif IPL (Rp, opsional)',
   'Blok',
   'No. Rumah',
 ];
@@ -87,7 +88,8 @@ const _petunjuk = [
   ['1. Sheet "Rumah": satu baris per blok. Kolom No. Rumah boleh berisi '
       'rentang (01-20), daftar (1, 2, 5), atau nomor khusus (12A).'],
   ['   Rentang yang diawali nol (01-20) menghasilkan 01, 02, ... 20.'],
-  ['2. Tipe rumah milik cluster. Satu blok berisi satu tipe.'],
+  ['2. Tipe rumah milik cluster. Satu blok berisi satu tipe. Tarif IPL '
+      'boleh dikosongkan (memakai tarif perumahan).'],
   ['3. Sheet "Warga" (opsional): rumah harus ada di master atau di sheet '
       'Rumah. Email wajib di mode online (untuk akun login warga).'],
   ['4. Data yang sudah ada tidak digandakan; file aman diunggah ulang.'],
@@ -99,9 +101,9 @@ Uint8List buildTemplate() => _workbook({
       sheetRumah: (
         _rumahHeader,
         [
-          ['Cluster Anggrek', 'Tipe 36/72', 36, 72, 'A1', '01-20'],
-          ['Cluster Anggrek', 'Tipe 45/90', 45, 90, 'A2', '01-15, 16A'],
-          ['Cluster Melati', 'Tipe 60/120', 60, 120, 'M1', '1-10'],
+          ['Cluster Anggrek', 'Tipe 36/72', 36, 72, null, 'A1', '01-20'],
+          ['Cluster Anggrek', 'Tipe 45/90', 45, 90, null, 'A2', '01-15, 16A'],
+          ['Cluster Melati', 'Tipe 60/120', 60, 120, 350000, 'M1', '1-10'],
         ],
       ),
       sheetWarga: (
@@ -125,6 +127,7 @@ Uint8List buildExport(EstateStore s) {
         t?.name ?? '',
         t?.buildingArea,
         t?.landArea,
+        t?.monthlyFee,
         b.name,
         compressHouseNumbers(s.housesOf(b.id).map((h) => h.number).toList()),
       ]);
@@ -222,6 +225,8 @@ Map<String, int> _columns(List<String> header) {
     String? key;
     if (h.contains('cluster')) {
       key = 'cluster';
+    } else if (h.contains('tarif') || h.contains('ipl')) {
+      key = 'fee';
     } else if (h.contains('bangunan') || h == 'lb') {
       key = 'lb';
     } else if (h.contains('tanah') || h == 'lt') {
@@ -344,6 +349,7 @@ ImportPlan parseWorkbook(List<int> bytes, EstateStore s,
       final block = get(row, 'blok');
       final numbers = get(row, 'no');
       final lbText = get(row, 'lb'), ltText = get(row, 'lt');
+      final feeText = get(row, 'fee');
       final missing = [
         if (cluster.isEmpty) 'Cluster',
         if (type.isEmpty) 'Tipe',
@@ -359,6 +365,11 @@ ImportPlan parseWorkbook(List<int> bytes, EstateStore s,
         continue;
       }
       final lb = _intOrNull(lbText), lt = _intOrNull(ltText);
+      final typeFee = _intOrNull(feeText.replaceAll(RegExp(r'^rp\s*', caseSensitive: false), ''));
+      if (feeText.isNotEmpty && (typeFee == null || typeFee <= 0)) {
+        plan.errors.add('$where: Tarif IPL harus angka.');
+        continue;
+      }
       if ((lbText.isNotEmpty && (lb == null || lb <= 0)) ||
           (ltText.isNotEmpty && (lt == null || lt <= 0))) {
         plan.errors.add('$where: luas bangunan/tanah harus angka.');
@@ -387,6 +398,10 @@ ImportPlan parseWorkbook(List<int> bytes, EstateStore s,
           plan.warnings.add('$where: luas ${exType.name} berbeda dengan data '
               'yang ada; data yang ada dipertahankan.');
         }
+        if (typeFee != null && typeFee != exType.monthlyFee) {
+          plan.warnings.add('$where: tarif IPL ${exType.name} berbeda dengan '
+              'data yang ada; ubah lewat Master Data bila perlu.');
+        }
       } else if (planTypes[tk] case final pt?) {
         if ((lb != null && lb != pt.buildingArea) ||
             (lt != null && lt != pt.landArea)) {
@@ -394,7 +409,7 @@ ImportPlan parseWorkbook(List<int> bytes, EstateStore s,
               'sebelumnya; dipakai yang pertama.');
         }
       } else {
-        final t = PlanType(cluster, type, lb, lt);
+        final t = PlanType(cluster, type, lb, lt, monthlyFee: typeFee);
         planTypes[tk] = t;
         plan.types.add(t);
       }

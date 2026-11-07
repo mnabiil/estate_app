@@ -82,6 +82,9 @@ class EstateStore extends ChangeNotifier {
   String estateAddress = 'Jl. Raya Griya Asri No. 1, Bekasi';
   int fee = monthlyFee;
 
+  /// Tanggal jatuh tempo IPL setiap bulan (1–28).
+  int billDueDay = defaultBillDueDay;
+
   /// Deposit ijin renovasi per jenis, diatur di profil perumahan.
   int depositSmall = defaultDepositSmall;
   int depositLarge = defaultDepositLarge;
@@ -259,6 +262,7 @@ class EstateStore extends ChangeNotifier {
       estateAddress = d['address'] as String? ?? '';
       registrationOpen = d['registrationOpen'] as bool? ?? true;
       fee = (d['monthlyFee'] as num?)?.toInt() ?? monthlyFee;
+      billDueDay = (d['billDueDay'] as num?)?.toInt() ?? defaultBillDueDay;
       depositSmall = (d['renovationDepositSmall'] as num?)?.toInt() ??
           defaultDepositSmall;
       depositLarge = (d['renovationDepositLarge'] as num?)?.toInt() ??
@@ -1417,6 +1421,7 @@ class EstateStore extends ChangeNotifier {
         name: t.name,
         buildingArea: t.buildingArea,
         landArea: t.landArea,
+        monthlyFee: t.monthlyFee,
       );
       typeIds['$cid|${normName(t.name)}'] = type.id;
       newTypes.add(type);
@@ -1463,6 +1468,7 @@ class EstateStore extends ChangeNotifier {
                 'name': t.name,
                 'buildingArea': t.buildingArea,
                 'landArea': t.landArea,
+                'monthlyFee': t.monthlyFee,
               }),
       ], 400);
       onProgress?.call('Menyimpan blok…');
@@ -1698,15 +1704,18 @@ class EstateStore extends ChangeNotifier {
     required int fee,
     int depositSmall = defaultDepositSmall,
     int depositLarge = defaultDepositLarge,
+    int billDueDay = defaultBillDueDay,
   }) async {
     _checkName(name, estates.map((e) => e.name), 'Perumahan');
+    _checkDueDay(billDueDay);
     String id;
     if (!isFirebase) {
       id = _newId('E');
       estates.add(EstateInfo(id: id, name: name));
       _demoEstates[id] = _DemoEstate.empty(name, address: address, fee: fee)
         ..depositSmall = depositSmall
-        ..depositLarge = depositLarge;
+        ..depositLarge = depositLarge
+        ..billDueDay = billDueDay;
     } else {
       final res =
           await _fn!.httpsCallable('createEstate').call<Map<String, dynamic>>({
@@ -1715,6 +1724,7 @@ class EstateStore extends ChangeNotifier {
         'monthlyFee': fee,
         'renovationDepositSmall': depositSmall,
         'renovationDepositLarge': depositLarge,
+        'billDueDay': billDueDay,
       });
       id = res.data['estateId'] as String;
       estates.add(EstateInfo(id: id, name: name));
@@ -1802,8 +1812,11 @@ class EstateStore extends ChangeNotifier {
     int? depositSmall,
     int? depositLarge,
     bool? registrationOpen,
+    int? billDueDay,
   }) async {
     final open = registrationOpen ?? this.registrationOpen;
+    final dueDay = billDueDay ?? this.billDueDay;
+    _checkDueDay(dueDay);
     final small = depositSmall ?? this.depositSmall;
     final large = depositLarge ?? this.depositLarge;
     if (small <= 0 || large <= 0) {
@@ -1820,6 +1833,7 @@ class EstateStore extends ChangeNotifier {
       this.depositSmall = small;
       this.depositLarge = large;
       this.registrationOpen = open;
+      this.billDueDay = dueDay;
       for (final e in estates) {
         if (e.id == _estateId) e.name = name;
       }
@@ -1833,7 +1847,21 @@ class EstateStore extends ChangeNotifier {
       'renovationDepositSmall': small,
       'renovationDepositLarge': large,
       'registrationOpen': open,
+      'billDueDay': dueDay,
     });
+  }
+
+  void _checkDueDay(int day) {
+    if (day < 1 || day > 28) {
+      throw StateError('Tanggal jatuh tempo harus 1–28.');
+    }
+  }
+
+  /// Tarif IPL sebuah rumah tangga: tarif tipe rumahnya bila diatur,
+  /// selain itu tarif perumahan.
+  int feeForResident(Resident r) {
+    final h = r.houseId == null ? null : houseById(r.houseId!);
+    return (h == null ? null : houseTypeOf(h)?.monthlyFee) ?? fee;
   }
 
   void _checkName(String name, Iterable<String> existing, String what) {
@@ -1875,7 +1903,10 @@ class EstateStore extends ChangeNotifier {
   }
 
   Future<void> saveHouseType(String clusterId, String name,
-      {String? id, int? buildingArea, int? landArea}) async {
+      {String? id, int? buildingArea, int? landArea, int? monthlyFee}) async {
+    if (monthlyFee != null && monthlyFee <= 0) {
+      throw StateError('Tarif IPL harus lebih dari 0.');
+    }
     _checkName(
         name,
         houseTypes
@@ -1889,12 +1920,14 @@ class EstateStore extends ChangeNotifier {
             clusterId: clusterId,
             name: name,
             buildingArea: buildingArea,
-            landArea: landArea));
+            landArea: landArea,
+            monthlyFee: monthlyFee));
       } else {
         houseTypeById(id)!
           ..name = name
           ..buildingArea = buildingArea
-          ..landArea = landArea;
+          ..landArea = landArea
+          ..monthlyFee = monthlyFee;
       }
       notifyListeners();
       return;
@@ -1905,6 +1938,7 @@ class EstateStore extends ChangeNotifier {
       'name': name,
       'buildingArea': buildingArea,
       'landArea': landArea,
+      'monthlyFee': monthlyFee,
     });
   }
 
@@ -2057,17 +2091,27 @@ class EstateStore extends ChangeNotifier {
         .toList();
     if (missing.isEmpty) return 0;
 
+    final due = dueDateFor(period, billDueDay);
     if (!isFirebase) {
       for (final r in missing) {
         bills.add(Bill(
-            id: _newId('B'), residentId: r.id, period: period, amount: fee));
+            id: _newId('B'),
+            residentId: r.id,
+            period: period,
+            amount: feeForResident(r),
+            dueDate: due));
       }
       notifyListeners();
       return missing.length;
     }
     final batch = _db!.batch();
     for (final r in missing) {
-      final bill = Bill(id: '', residentId: r.id, period: period, amount: fee);
+      final bill = Bill(
+          id: '',
+          residentId: r.id,
+          period: period,
+          amount: feeForResident(r),
+          dueDate: due);
       batch.set(_est.collection('bills').doc(Bill.docId(r.id, period)), {
         ...bill.toMap(),
         'createdAt': FieldValue.serverTimestamp(),
@@ -2576,6 +2620,7 @@ class _DemoEstate {
         ..depositSmall = s.depositSmall
         ..depositLarge = s.depositLarge
         ..registrationOpen = s.registrationOpen
+        ..billDueDay = s.billDueDay
         ..registrations.addAll(s.registrations)
         ..members.addAll(s.members);
 
@@ -2585,6 +2630,7 @@ class _DemoEstate {
   int depositSmall = defaultDepositSmall;
   int depositLarge = defaultDepositLarge;
   bool registrationOpen = true;
+  int billDueDay = defaultBillDueDay;
   final registrations = <Registration>[];
   final members = <HouseholdMember>[];
   final renovations = <Renovation>[];
@@ -2617,6 +2663,7 @@ class _DemoEstate {
     s.depositSmall = depositSmall;
     s.depositLarge = depositLarge;
     s.registrationOpen = registrationOpen;
+    s.billDueDay = billDueDay;
     s.registrations.addAll(registrations);
     s.members.addAll(members);
   }

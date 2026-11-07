@@ -86,7 +86,10 @@ service cloud.firestore {
       allow update: if isAdmin(estateId)
         && onlyChanges(['name', 'address', 'monthlyFee',
           'renovationDepositSmall', 'renovationDepositLarge',
-          'registrationOpen'])
+          'registrationOpen', 'billDueDay'])
+        && (request.resource.data.get('billDueDay', 10) is int
+          && request.resource.data.get('billDueDay', 10) >= 1
+          && request.resource.data.get('billDueDay', 10) <= 28)
         && request.resource.data.get('registrationOpen', true) is bool
         && (request.resource.data.get('renovationDepositSmall', 1) is int
           && request.resource.data.get('renovationDepositSmall', 1) > 0)
@@ -128,7 +131,11 @@ service cloud.firestore {
       match /houseTypes/{typeId} {
         allow read: if inEstate(estateId);
         allow create, update: if isAdmin(estateId)
-          && request.resource.data.keys().hasOnly(['clusterId', 'name', 'buildingArea', 'landArea'])
+          && request.resource.data.keys().hasOnly(['clusterId', 'name', 'buildingArea', 'landArea', 'monthlyFee'])
+          // Tarif IPL khusus tipe (opsional).
+          && (request.resource.data.get('monthlyFee', null) == null
+            || (request.resource.data.monthlyFee is int
+              && request.resource.data.monthlyFee > 0))
           && request.resource.data.clusterId is string
           && validName(40)
           && (request.resource.data.get('buildingArea', null) == null

@@ -12,7 +12,7 @@
  *  - payBill             (callable)  warga membayar tagihan (SIMULASI, lihat catatan)
  *  - generateMonthlyBills (terjadwal) membuat tagihan IPL tiap tanggal 1, 01.00 WIB
  *  - notifyAnnouncement / notifyBillCreated / notifyBillPaid (trigger Firestore)
- *  - remindBills         (terjadwal) pengingat tagihan tgl 8 & 12, 09.00 WIB
+ *  - remindBills         (terjadwal, harian 09.00 WIB) pengingat H-2 & H+2 jatuh tempo
  *                        -> notifikasi push (FCM) ke perangkat warga
  *
  * Butuh paket Firebase "Blaze" untuk deploy.
@@ -32,6 +32,18 @@ setGlobalOptions({ region: "asia-southeast2", maxInstances: 10 });
 
 const db = getFirestore();
 const DEFAULT_FEE = 250000;
+const DEFAULT_DUE_DAY = 10;
+
+/** Tanggal jatuh tempo IPL perumahan (1–28). */
+function dueDayOf(estate: FirebaseFirestore.DocumentSnapshot): number {
+  const d = Number(estate.get("billDueDay") ?? DEFAULT_DUE_DAY);
+  return Number.isInteger(d) && d >= 1 && d <= 28 ? d : DEFAULT_DUE_DAY;
+}
+
+/** "2026-11" + 5 -> "2026-11-05" */
+function dueDateKey(period: string, day: number): string {
+  return `${period}-${String(day).padStart(2, "0")}`;
+}
 
 type Profile = {
   estateId: string;
@@ -92,6 +104,10 @@ export const createEstate = onCall(async (req) => {
   if (!Number.isInteger(fee) || fee <= 0) {
     throw new HttpsError("invalid-argument", "Tarif IPL harus angka bulat > 0.");
   }
+  const billDueDay = Number(data.billDueDay ?? DEFAULT_DUE_DAY);
+  if (!Number.isInteger(billDueDay) || billDueDay < 1 || billDueDay > 28) {
+    throw new HttpsError("invalid-argument", "Tanggal jatuh tempo harus 1–28.");
+  }
   const depositSmall = Number(data.renovationDepositSmall ?? 1000000);
   const depositLarge = Number(data.renovationDepositLarge ?? 5000000);
   for (const d of [depositSmall, depositLarge]) {
@@ -112,6 +128,7 @@ export const createEstate = onCall(async (req) => {
     monthlyFee: fee,
     renovationDepositSmall: depositSmall,
     renovationDepositLarge: depositLarge,
+    billDueDay,
     createdBy: uid,
     createdAt: FieldValue.serverTimestamp(),
   });
@@ -246,7 +263,27 @@ export const generateMonthlyBills = onSchedule(
 
     for (const estate of estates.docs) {
       const fee = Number(estate.get("monthlyFee") ?? DEFAULT_FEE);
-      const residents = await estate.ref.collection("residents").get();
+      const dueDate = dueDateKey(period, dueDayOf(estate));
+      // Tarif per tipe rumah: rumah -> blok -> tipe.monthlyFee.
+      const [residents, houses, blocks, types] = await Promise.all([
+        estate.ref.collection("residents").get(),
+        estate.ref.collection("houses").get(),
+        estate.ref.collection("blocks").get(),
+        estate.ref.collection("houseTypes").get(),
+      ]);
+      const typeFee = new Map<string, number>();
+      types.docs.forEach((t) => {
+        const f = Number(t.get("monthlyFee"));
+        if (Number.isInteger(f) && f > 0) typeFee.set(t.id, f);
+      });
+      const blockType = new Map(blocks.docs.map((b) => [b.id, String(b.get("typeId") ?? "")]));
+      const houseBlock = new Map(houses.docs.map((h) => [h.id, String(h.get("blockId") ?? "")]));
+      const feeFor = (houseId: unknown): number => {
+        if (typeof houseId !== "string") return fee;
+        const typeId = blockType.get(houseBlock.get(houseId) ?? "") ?? "";
+        return typeFee.get(typeId) ?? fee;
+      };
+
       const writer = db.bulkWriter();
       for (const r of residents.docs) {
         // ID deterministik -> create() gagal bila tagihan bulan ini sudah ada (aman diulang).
@@ -254,7 +291,8 @@ export const generateMonthlyBills = onSchedule(
           .create(estate.ref.collection("bills").doc(`${r.id}_${period}`), {
             residentId: r.id,
             period,
-            amount: fee,
+            amount: feeFor(r.get("houseId")),
+            dueDate,
             status: "belumBayar",
             paidAt: null,
             method: null,
@@ -721,7 +759,7 @@ export const notifyBillCreated = onDocumentCreated(
       await residentUsers(estateId, String(b.get("residentId"))),
       "bills",
       `Tagihan IPL ${monthLabel(period)}`,
-      `${rupiah(Number(b.get("amount")))} sudah terbit. Jatuh tempo tanggal 10.`,
+      `${rupiah(Number(b.get("amount")))} sudah terbit. Jatuh tempo ${dateLabel(billDueDate(b))}.`,
       { type: "bill", estateId, id: b.id },
     );
   },
@@ -745,33 +783,54 @@ export const notifyBillPaid = onDocumentUpdated(
   },
 );
 
-/** Tgl 8: pengingat jatuh tempo (tgl 10). Tgl 12: tagihan terlambat. */
+/** Jatuh tempo tagihan ("YYYY-MM-DD"); tagihan lama tanpa field: tanggal 10. */
+function billDueDate(bill: FirebaseFirestore.DocumentSnapshot): string {
+  const d = bill.get("dueDate");
+  return typeof d === "string" ? d : dueDateKey(String(bill.get("period")), DEFAULT_DUE_DAY);
+}
+
+/** "2026-11-05" -> "5 November 2026" */
+function dateLabel(key: string): string {
+  const [y, m, d] = key.split("-").map(Number);
+  return `${d} ${MONTHS[(m || 1) - 1]} ${y}`;
+}
+
+/** Tanggal hari ini (WIB) digeser [days] hari, sebagai "YYYY-MM-DD". */
+function jakartaDayKey(offsetDays = 0): string {
+  const shifted = new Date(Date.now() + offsetDays * 86400000);
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Jakarta",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(shifted);
+}
+
+/**
+ * Harian 09.00 WIB: pengingat H-2 sebelum jatuh tempo, dan pemberitahuan
+ * H+2 setelah jatuh tempo, untuk tagihan yang belum dibayar.
+ */
 export const remindBills = onSchedule(
-  { schedule: "0 9 8,12 * *", timeZone: "Asia/Jakarta" },
+  { schedule: "0 9 * * *", timeZone: "Asia/Jakarta" },
   async () => {
-    const now = new Date();
-    const period = jakartaMonthKey(now);
-    const day = Number(
-      new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Jakarta", day: "numeric" }).format(now),
-    );
-    const overdue = day > 10;
+    const dueSoon = jakartaDayKey(2); // jatuh tempo lusa
+    const overdue = jakartaDayKey(-2); // jatuh tempo 2 hari lalu
     const estates = await db.collection("estates").get();
     for (const estate of estates.docs) {
-      const unpaid = await estate.ref
-        .collection("bills")
-        .where("period", "==", period)
-        .where("status", "==", "belumBayar")
-        .get();
+      const unpaid = await estate.ref.collection("bills").where("status", "==", "belumBayar").get();
       for (const bill of unpaid.docs) {
+        const due = billDueDate(bill);
+        if (due !== dueSoon && due !== overdue) continue;
+        const late = due === overdue;
+        const period = String(bill.get("period"));
+        const amount = rupiah(Number(bill.get("amount")));
         await push(
           await residentUsers(estate.id, String(bill.get("residentId"))),
           "bills",
-          overdue
-            ? `IPL ${monthLabel(period)} lewat jatuh tempo`
-            : `Pengingat: IPL ${monthLabel(period)}`,
-          overdue
-            ? `${rupiah(Number(bill.get("amount")))} belum dibayar. Mohon segera dilunasi.`
-            : `${rupiah(Number(bill.get("amount")))} jatuh tempo tanggal 10. Bayar lewat aplikasi.`,
+          late ? `IPL ${monthLabel(period)} lewat jatuh tempo` : `Pengingat: IPL ${monthLabel(period)}`,
+          late
+            ? `${amount} belum dibayar (jatuh tempo ${dateLabel(due)}). Mohon segera dilunasi.`
+            : `${amount} jatuh tempo ${dateLabel(due)}. Bayar lewat aplikasi.`,
           { type: "bill", estateId: estate.id, id: bill.id },
         );
       }

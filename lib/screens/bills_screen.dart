@@ -153,7 +153,8 @@ class _BillsScreenState extends State<BillsScreen> {
                               if (isAdmin) 'IPL ${formatMonth(b.period)}',
                               paid
                                   ? 'Dibayar ${formatDate(b.paidAt!)} · ${b.method}'
-                                  : 'Jatuh tempo ${formatDate(b.dueDate)}',
+                                  : 'Jatuh tempo ${formatDate(b.dueDate)}'
+                                      '${b.isOverdueOn(DateTime.now()) ? ' · terlambat' : ''}',
                             ].join('\n')),
                             isThreeLine: isAdmin,
                             trailing: Column(
