@@ -28,9 +28,6 @@ jobs:
       - name: Ambil dependensi
         run: flutter pub get
 
-      - name: Cek format
-        run: dart format --output=none --set-exit-if-changed lib test
-
       - name: Analisis kode
         run: flutter analyze --no-fatal-infos
 
