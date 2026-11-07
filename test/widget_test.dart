@@ -18,7 +18,8 @@ void main() {
     await tester.ensureVisible(find.text('Masuk'));
     await tester.tap(find.text('Masuk'));
     await tester.pumpAndSettle();
-    expect(find.text('Halo, Budi Santoso'), findsOneWidget);
+    expect(find.text('Halo,'), findsOneWidget);
+    expect(find.text('Budi Santoso'), findsOneWidget);
 
     final before = store.unpaidTotal('R1');
     expect(before, greaterThan(0));

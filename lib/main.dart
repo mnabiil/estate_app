@@ -5,6 +5,7 @@ import 'firebase_options.dart';
 import 'screens/home_shell.dart';
 import 'screens/login_screen.dart';
 import 'store.dart';
+import 'theme.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -18,8 +19,6 @@ Future<void> main() async {
   runApp(const EstateApp());
 }
 
-const _seedColor = Color(0xFF2E7D5B);
-
 class EstateApp extends StatelessWidget {
   const EstateApp({super.key});
 
@@ -28,12 +27,8 @@ class EstateApp extends StatelessWidget {
     return MaterialApp(
       title: 'Griya Kita',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(colorSchemeSeed: _seedColor, useMaterial3: true),
-      darkTheme: ThemeData(
-        colorSchemeSeed: _seedColor,
-        brightness: Brightness.dark,
-        useMaterial3: true,
-      ),
+      theme: buildTheme(Brightness.light),
+      darkTheme: buildTheme(Brightness.dark),
       home: ListenableBuilder(
         listenable: store,
         builder: (context, _) =>

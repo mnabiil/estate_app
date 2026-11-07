@@ -14,6 +14,12 @@ Dua peran: **Warga** dan **Pengelola**. Data masih contoh (in-memory), belum ada
 | Pengumuman | Baca | Buat pengumuman |
 | Data warga | — | Cari, tambah, lihat riwayat IPL |
 
+## Tampilan
+
+Gaya visual terinspirasi UI kit *Rise Real Estate* (Figma Community): teks navy, warna utama
+teal, aksen hijau lime, kartu abu muda bersudut besar. Font **Lato** & **Raleway** dibundel di
+`assets/fonts/` (SIL Open Font License). Semua warna dan gaya komponen diatur di `lib/theme.dart`.
+
 ## Menjalankan
 
 1. Install Flutter SDK (3.27 atau lebih baru): https://docs.flutter.dev/get-started/install
@@ -100,6 +106,7 @@ lib/
   firebase_options.dart  # Dibuat oleh flutterfire configure
   models.dart            # Model + serialisasi Firestore
   store.dart             # State: mode demo & mode Firebase
+  theme.dart             # Warna, font & gaya komponen (ubah tampilan di sini)
   utils.dart             # Format Rupiah & tanggal
   widgets.dart           # Komponen kecil + runAction (penanganan error)
   screens/               # Satu file per layar

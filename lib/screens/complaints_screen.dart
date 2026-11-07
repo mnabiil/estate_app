@@ -294,7 +294,6 @@ class _ComplaintFormScreenState extends State<ComplaintFormScreen> {
               decoration: const InputDecoration(
                 labelText: 'Judul',
                 hintText: 'Contoh: Lampu jalan mati',
-                border: OutlineInputBorder(),
               ),
               validator: _required,
             ),
@@ -306,7 +305,6 @@ class _ComplaintFormScreenState extends State<ComplaintFormScreen> {
               decoration: const InputDecoration(
                 labelText: 'Deskripsi',
                 alignLabelWithHint: true,
-                border: OutlineInputBorder(),
               ),
               validator: _required,
             ),
@@ -373,7 +371,8 @@ class _ComplaintFormScreenState extends State<ComplaintFormScreen> {
                   ? const SizedBox(
                       width: 18,
                       height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.white),
                     )
                   : const Icon(Icons.send),
               label: Text(_saving ? 'Mengirim...' : 'Kirim'),

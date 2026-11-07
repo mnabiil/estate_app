@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models.dart';
 import '../store.dart';
+import '../theme.dart';
 import '../widgets.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -21,37 +22,87 @@ class _LoginScreenState extends State<LoginScreen> {
     final scheme = theme.colorScheme;
 
     return Scaffold(
-      body: SafeArea(
-        child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(24),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 420),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Icon(Icons.holiday_village, size: 72, color: scheme.primary),
-                  const SizedBox(height: 12),
-                  Text(
-                    'Griya Kita',
-                    textAlign: TextAlign.center,
-                    style: theme.textTheme.headlineMedium
-                        ?.copyWith(fontWeight: FontWeight.bold),
-                  ),
-                  Text(
-                    'Manajemen $estateName',
-                    textAlign: TextAlign.center,
-                    style: theme.textTheme.bodyMedium
-                        ?.copyWith(color: scheme.onSurfaceVariant),
-                  ),
-                  const SizedBox(height: 32),
-                  if (store.isFirebase)
-                    const _EmailLoginForm()
-                  else
-                    ..._demoLogin(theme, scheme),
-                ],
+      backgroundColor: AppColors.teal,
+      body: DecoratedBox(
+        decoration: const BoxDecoration(gradient: AppColors.splashGradient),
+        child: SafeArea(
+          bottom: false,
+          child: CustomScrollView(
+            slivers: [
+              SliverFillRemaining(
+                hasScrollBody: false,
+                child: Column(
+                  children: [
+                    // Bagian atas: logo & nama aplikasi di atas latar gradasi.
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(24, 40, 24, 32),
+                      child: Column(
+                        children: [
+                          const Icon(Icons.holiday_village_rounded,
+                              size: 76, color: AppColors.lime),
+                          const SizedBox(height: 8),
+                          Text(
+                            'Griya Kita',
+                            textAlign: TextAlign.center,
+                            style: theme.textTheme.headlineLarge?.copyWith(
+                              fontFamily: fontBody,
+                              fontWeight: FontWeight.w900,
+                              color: Colors.white,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'Manajemen $estateName',
+                            textAlign: TextAlign.center,
+                            style: theme.textTheme.bodyMedium
+                                ?.copyWith(color: Colors.white70),
+                          ),
+                        ],
+                      ),
+                    ),
+                    // Panel putih berisi form login.
+                    Expanded(
+                      child: Container(
+                        width: double.infinity,
+                        decoration: BoxDecoration(
+                          color: scheme.surface,
+                          borderRadius: const BorderRadius.vertical(
+                              top: Radius.circular(40)),
+                        ),
+                        padding: EdgeInsets.fromLTRB(24, 32, 24,
+                            24 + MediaQuery.paddingOf(context).bottom),
+                        child: Align(
+                          alignment: Alignment.topCenter,
+                          child: ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 420),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                const TwoToneHeading('Selamat datang,',
+                                    'silakan masuk'),
+                                const SizedBox(height: 8),
+                                Text(
+                                  store.isFirebase
+                                      ? 'Gunakan akun yang diberikan pengelola.'
+                                      : 'Pilih peran untuk mencoba aplikasi.',
+                                  style: theme.textTheme.bodyMedium?.copyWith(
+                                      color: scheme.onSurfaceVariant),
+                                ),
+                                const SizedBox(height: 24),
+                                if (store.isFirebase)
+                                  const _EmailLoginForm()
+                                else
+                                  ..._demoLogin(theme, scheme),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            ),
+            ],
           ),
         ),
       ),
@@ -107,9 +158,6 @@ class _LoginScreenState extends State<LoginScreen> {
         ),
       const SizedBox(height: 24),
       FilledButton(
-        style: FilledButton.styleFrom(
-          padding: const EdgeInsets.symmetric(vertical: 16),
-        ),
         onPressed: () => store.login(_role, residentId: _residentId),
         child: const Text('Masuk'),
       ),
@@ -195,7 +243,6 @@ class _EmailLoginFormState extends State<_EmailLoginForm> {
               decoration: const InputDecoration(
                 labelText: 'Email',
                 prefixIcon: Icon(Icons.email_outlined),
-                border: OutlineInputBorder(),
               ),
               validator: (v) =>
                   (v == null || !v.contains('@')) ? 'Email tidak valid' : null,
@@ -208,7 +255,6 @@ class _EmailLoginFormState extends State<_EmailLoginForm> {
               decoration: InputDecoration(
                 labelText: 'Password',
                 prefixIcon: const Icon(Icons.lock_outline),
-                border: const OutlineInputBorder(),
                 suffixIcon: IconButton(
                   icon:
                       Icon(_obscure ? Icons.visibility : Icons.visibility_off),
@@ -224,15 +270,13 @@ class _EmailLoginFormState extends State<_EmailLoginForm> {
             ],
             const SizedBox(height: 24),
             FilledButton(
-              style: FilledButton.styleFrom(
-                padding: const EdgeInsets.symmetric(vertical: 16),
-              ),
               onPressed: _busy ? null : _signIn,
               child: _busy
                   ? const SizedBox(
                       height: 20,
                       width: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2),
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.white),
                     )
                   : const Text('Masuk'),
             ),
