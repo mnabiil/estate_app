@@ -48,9 +48,9 @@ class _ImportScreenState extends State<ImportScreen> {
       .replaceAll(RegExp(r'^-|-$'), '');
 
   Future<void> _pick() async {
-    final PlatformFile? file;
+    final PlatformFile? picked;
     try {
-      file = await FilePicker.pickFile(
+      picked = await FilePicker.pickFile(
         type: FileType.custom,
         allowedExtensions: const ['xlsx'],
         dialogTitle: 'Pilih file Excel',
@@ -59,7 +59,9 @@ class _ImportScreenState extends State<ImportScreen> {
       if (mounted) showSnack(context, 'Gagal memilih file: ${describeError(e)}');
       return;
     }
-    if (file == null) return;
+    if (picked == null) return;
+    // Variabel non-null agar bisa dipakai di dalam closure setState.
+    final PlatformFile file = picked;
     setState(() {
       _busy = true;
       _progress = 'Membaca ${file.name}…';
