@@ -38,7 +38,13 @@ class EstateStore extends ChangeNotifier {
   final List<Visitor> visitors = [];
   final List<Announcement> announcements = [];
 
+  // Master perumahan.
+  final List<Cluster> clusters = [];
+  final List<HouseBlock> blocks = [];
+  final List<House> houses = [];
+
   String estateName = 'Perumahan Griya Asri';
+  String estateAddress = 'Jl. Raya Griya Asri No. 1, Bekasi';
   int fee = monthlyFee;
 
   final _random = Random();
@@ -110,6 +116,7 @@ class EstateStore extends ChangeNotifier {
     _subs.add(_est.snapshots().listen((s) {
       final d = s.data() ?? const {};
       estateName = d['name'] as String? ?? 'Perumahan';
+      estateAddress = d['address'] as String? ?? '';
       fee = (d['monthlyFee'] as num?)?.toInt() ?? monthlyFee;
       notifyListeners();
     }, onError: _onStreamError));
@@ -124,6 +131,9 @@ class EstateStore extends ChangeNotifier {
         notifyListeners();
       }, onError: _onStreamError));
     }
+    _bind(_est.collection('clusters'), clusters, Cluster.fromMap);
+    _bind(_est.collection('blocks'), blocks, HouseBlock.fromMap);
+    _bind(_est.collection('houses'), houses, House.fromMap);
     _bind(scoped('bills'), bills, Bill.fromMap);
     _bind(scoped('complaints'), complaints, Complaint.fromMap);
     _bind(scoped('visitors'), visitors, Visitor.fromMap);
@@ -161,6 +171,9 @@ class EstateStore extends ChangeNotifier {
 
   void _clearData() {
     residents.clear();
+    clusters.clear();
+    blocks.clear();
+    houses.clear();
     bills.clear();
     complaints.clear();
     visitors.clear();
@@ -222,13 +235,24 @@ class EstateStore extends ChangeNotifier {
     return null;
   }
 
-  /// Menambah warga. Di mode Firebase sekaligus membuat akun login lewat
-  /// Cloud Function dan mengembalikan password sementaranya.
-  Future<String?> addResident(String name, String houseNo, String phone,
+  /// Menambah warga di rumah [houseId] (dari master rumah). Di mode Firebase
+  /// sekaligus membuat akun login lewat Cloud Function dan mengembalikan
+  /// password sementaranya.
+  Future<String?> addResident(String name, String houseId, String phone,
       {String? email}) async {
+    final house = houseById(houseId);
+    if (house == null) throw StateError('Rumah tidak ditemukan.');
+    if (residentOfHouse(houseId) != null) {
+      throw StateError('Rumah ${houseLabel(house)} sudah berpenghuni.');
+    }
     if (!isFirebase) {
       residents.add(Resident(
-          id: _newId('R'), name: name, houseNo: houseNo, phone: phone));
+        id: _newId('R'),
+        name: name,
+        houseNo: houseLabel(house),
+        houseId: houseId,
+        phone: phone,
+      ));
       notifyListeners();
       return null;
     }
@@ -236,11 +260,185 @@ class EstateStore extends ChangeNotifier {
         await _fn!.httpsCallable('createResident').call<Map<String, dynamic>>({
       'estateId': _estateId,
       'name': name,
-      'houseNo': houseNo,
+      'houseId': houseId,
       'phone': phone,
       'email': email,
     });
     return res.data['tempPassword'] as String?;
+  }
+
+  // ---------- Master perumahan ----------
+
+  Cluster? clusterById(String id) {
+    for (final c in clusters) {
+      if (c.id == id) return c;
+    }
+    return null;
+  }
+
+  HouseBlock? blockById(String id) {
+    for (final b in blocks) {
+      if (b.id == id) return b;
+    }
+    return null;
+  }
+
+  House? houseById(String id) {
+    for (final h in houses) {
+      if (h.id == id) return h;
+    }
+    return null;
+  }
+
+  List<Cluster> get sortedClusters =>
+      clusters.toList()..sort((a, b) => a.name.compareTo(b.name));
+
+  List<HouseBlock> blocksOf(String clusterId) =>
+      blocks.where((b) => b.clusterId == clusterId).toList()
+        ..sort((a, b) => compareHouseNumber(a.name, b.name));
+
+  List<House> housesOf(String blockId) =>
+      houses.where((h) => h.blockId == blockId).toList()
+        ..sort((a, b) => compareHouseNumber(a.number, b.number));
+
+  /// Label rumah, mis. "A1/05".
+  String houseLabel(House h) => '${blockById(h.blockId)?.name ?? '?'}/${h.number}';
+
+  /// Warga yang menempati rumah ini, atau null bila kosong.
+  Resident? residentOfHouse(String houseId) {
+    for (final r in residents) {
+      if (r.houseId == houseId) return r;
+    }
+    return null;
+  }
+
+  Future<void> updateEstate(
+      {required String name, required String address, required int fee}) async {
+    if (!isFirebase) {
+      estateName = name;
+      estateAddress = address;
+      this.fee = fee;
+      notifyListeners();
+      return;
+    }
+    await _est.update({'name': name, 'address': address, 'monthlyFee': fee});
+  }
+
+  void _checkName(String name, Iterable<String> existing, String what) {
+    final n = name.trim().toLowerCase();
+    if (existing.any((e) => e.trim().toLowerCase() == n)) {
+      throw StateError('$what "$name" sudah ada.');
+    }
+  }
+
+  Future<void> saveCluster(String name, {String? id}) async {
+    _checkName(name, clusters.where((c) => c.id != id).map((c) => c.name),
+        'Cluster');
+    if (!isFirebase) {
+      if (id == null) {
+        clusters.add(Cluster(id: _newId('C'), name: name));
+      } else {
+        clusterById(id)!.name = name;
+      }
+      notifyListeners();
+      return;
+    }
+    final col = _est.collection('clusters');
+    await (id == null ? col.doc() : col.doc(id)).set({'name': name});
+  }
+
+  Future<void> deleteCluster(String id) async {
+    if (blocks.any((b) => b.clusterId == id)) {
+      throw StateError('Hapus dulu semua blok di cluster ini.');
+    }
+    if (!isFirebase) {
+      clusters.removeWhere((c) => c.id == id);
+      notifyListeners();
+      return;
+    }
+    await _est.collection('clusters').doc(id).delete();
+  }
+
+  Future<void> saveBlock(String clusterId, String name, {String? id}) async {
+    _checkName(
+        name,
+        blocks
+            .where((b) => b.clusterId == clusterId && b.id != id)
+            .map((b) => b.name),
+        'Blok');
+    if (!isFirebase) {
+      if (id == null) {
+        blocks.add(HouseBlock(id: _newId('K'), clusterId: clusterId, name: name));
+      } else {
+        blockById(id)!.name = name;
+      }
+      notifyListeners();
+      return;
+    }
+    final col = _est.collection('blocks');
+    await (id == null ? col.doc() : col.doc(id))
+        .set({'clusterId': clusterId, 'name': name});
+  }
+
+  Future<void> deleteBlock(String id) async {
+    if (houses.any((h) => h.blockId == id)) {
+      throw StateError('Hapus dulu semua nomor rumah di blok ini.');
+    }
+    if (!isFirebase) {
+      blocks.removeWhere((b) => b.id == id);
+      notifyListeners();
+      return;
+    }
+    await _est.collection('blocks').doc(id).delete();
+  }
+
+  /// Menambah nomor rumah ke blok. Nomor yang sudah ada dilewati.
+  /// Mengembalikan jumlah nomor yang benar-benar ditambahkan.
+  Future<int> addHouses(String blockId, List<String> numbers) async {
+    final block = blockById(blockId)!;
+    final existing = housesOf(blockId).map((h) => h.number.toLowerCase()).toSet();
+    final fresh = <String>[];
+    for (final n in numbers.map((n) => n.trim())) {
+      if (n.isNotEmpty && existing.add(n.toLowerCase())) fresh.add(n);
+    }
+    if (fresh.isEmpty) return 0;
+    if (fresh.length > 300) {
+      throw StateError('Maksimal 300 nomor sekaligus.');
+    }
+    if (!isFirebase) {
+      for (final n in fresh) {
+        houses.add(House(
+            id: _newId('H'),
+            clusterId: block.clusterId,
+            blockId: blockId,
+            number: n));
+      }
+      notifyListeners();
+      return fresh.length;
+    }
+    final batch = _db!.batch();
+    for (final n in fresh) {
+      batch.set(_est.collection('houses').doc(), {
+        'clusterId': block.clusterId,
+        'blockId': blockId,
+        'number': n,
+      });
+    }
+    await batch.commit();
+    return fresh.length;
+  }
+
+  Future<void> deleteHouse(String id) async {
+    final r = residentOfHouse(id);
+    if (r != null) {
+      throw StateError('Rumah ini masih ditempati ${r.name}.');
+    }
+    if (!isFirebase) {
+      houses.removeWhere((h) => h.id == id);
+      notifyListeners();
+      return;
+    }
+    await _est.collection('houses').doc(id).delete();
   }
 
   // ---------- Tagihan IPL ----------
@@ -440,10 +638,44 @@ class EstateStore extends ChangeNotifier {
       ('Joko Susilo', 'B2/04', '0838-6655-4433'),
       ('Rina Marlina', 'B2/10', '0857-7788-9900'),
     ];
+    // Master: 2 cluster, masing-masing 2 blok, tiap blok rumah no. 01-12.
+    const master = {
+      'Cluster Anggrek': ['A1', 'A2'],
+      'Cluster Bougenville': ['B1', 'B2'],
+    };
+    for (final MapEntry(key: clusterName, value: blockNames)
+        in master.entries) {
+      final c = Cluster(id: _newId('C'), name: clusterName);
+      clusters.add(c);
+      for (final bn in blockNames) {
+        final b = HouseBlock(id: _newId('K'), clusterId: c.id, name: bn);
+        blocks.add(b);
+        for (var n = 1; n <= 12; n++) {
+          houses.add(House(
+            id: _newId('H'),
+            clusterId: c.id,
+            blockId: b.id,
+            number: n.toString().padLeft(2, '0'),
+          ));
+        }
+      }
+    }
+    String? houseIdFor(String label) {
+      for (final h in houses) {
+        if (houseLabel(h) == label) return h.id;
+      }
+      return null;
+    }
+
     for (var i = 0; i < data.length; i++) {
       final (name, house, phone) = data[i];
-      residents.add(
-          Resident(id: 'R${i + 1}', name: name, houseNo: house, phone: phone));
+      residents.add(Resident(
+        id: 'R${i + 1}',
+        name: name,
+        houseNo: house,
+        houseId: houseIdFor(house),
+        phone: phone,
+      ));
     }
 
     final now = DateTime.now();

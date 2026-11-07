@@ -63,9 +63,27 @@ export const createResident = onCall(async (req) => {
     throw new HttpsError("permission-denied", "Hanya pengelola perumahan ini yang bisa menambah warga.");
   }
   const name = requireText(data.name, "Nama", 100);
-  const houseNo = requireText(data.houseNo, "No. rumah", 20);
+  const houseId = requireText(data.houseId, "Rumah", 100);
   const phone = requireText(data.phone, "No. HP", 20);
   const email = requireText(data.email, "Email", 120).toLowerCase();
+
+  // Rumah harus ada di master dan belum berpenghuni.
+  const estateRef = db.doc(`estates/${estateId}`);
+  const houseSnap = await estateRef.collection("houses").doc(houseId).get();
+  if (!houseSnap.exists) {
+    throw new HttpsError("not-found", "Rumah tidak ditemukan di master data.");
+  }
+  const house = houseSnap.data()!;
+  const blockSnap = await estateRef.collection("blocks").doc(String(house.blockId)).get();
+  const houseNo = `${blockSnap.get("name") ?? "?"}/${house.number}`;
+  const occupied = await estateRef
+    .collection("residents")
+    .where("houseId", "==", houseId)
+    .limit(1)
+    .get();
+  if (!occupied.empty) {
+    throw new HttpsError("already-exists", `Rumah ${houseNo} sudah berpenghuni.`);
+  }
 
   const tempPassword = randomBytes(9).toString("base64url");
   let uid: string;
@@ -87,6 +105,7 @@ export const createResident = onCall(async (req) => {
   const batch = db.batch();
   batch.set(residentRef, {
     name,
+    houseId,
     houseNo,
     phone,
     email,

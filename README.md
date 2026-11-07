@@ -14,7 +14,8 @@ Dua peran: **Warga** dan **Pengelola**. Data masih contoh (in-memory), belum ada
 | Keluhan | Buat (dengan foto, maks. 3) & pantau status | Lihat semua, ubah status (Baru/Diproses/Selesai) |
 | Tamu | Daftarkan tamu → dapat kode akses 6 digit | Log tamu, check-in |
 | Pengumuman | Baca | Buat pengumuman |
-| Data warga | — | Cari, tambah, lihat riwayat IPL |
+| Data warga | — | Cari, tambah (pilih rumah dari daftar), lihat riwayat IPL |
+| Master data | — | Profil perumahan, Cluster → Blok → No. rumah (tambah nomor sekaligus per rentang) |
 
 ## Tampilan
 
@@ -83,15 +84,20 @@ Aplikasi otomatis memilih mode:
      `name` (string) = `Perumahan Griya Asri`, `monthlyFee` (number) = `250000`
    - Firestore → buat dokumen `users/<User UID>`:
      `estateId` = `griya-asri`, `role` = `pengelola`, `name` = `Pak Hendra`
-6. Login di aplikasi sebagai pengelola → tab **Warga** → tambah warga (akun & password
+6. Login di aplikasi sebagai pengelola → **Akun → Master data perumahan** → isi cluster,
+   blok, dan nomor rumah.
+7. Tab **Warga** → tambah warga, pilih rumahnya dari daftar (akun & password
    sementara warga dibuat otomatis oleh Cloud Function `createResident`).
 
 ### Struktur data Firestore
 
 ```
 users/{uid}                      { estateId, role, residentId?, name }
-estates/{estateId}               { name, monthlyFee }
-  residents/{residentId}         { name, houseNo, phone, email, uid }
+estates/{estateId}               { name, address, monthlyFee }
+  clusters/{id}                  { name }
+  blocks/{id}                    { clusterId, name }
+  houses/{id}                    { clusterId, blockId, number }
+  residents/{residentId}         { name, houseId, houseNo, phone, email, uid }
   bills/{residentId_YYYY-MM}     { residentId, period, amount, status, paidAt, method }
   complaints/{id}                { residentId, title, description, category, status, photoUrls, createdAt }
   visitors/{id}                  { residentId, name, purpose, visitDate, code, checkedInAt }

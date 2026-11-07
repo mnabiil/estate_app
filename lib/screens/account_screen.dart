@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../store.dart';
 import 'announcements_screen.dart';
+import 'master_data_screen.dart';
 import 'visitors_screen.dart';
 
 class AccountScreen extends StatelessWidget {
@@ -50,6 +51,14 @@ class AccountScreen extends StatelessWidget {
             trailing: const Icon(Icons.chevron_right),
             onTap: () => push(const AnnouncementsScreen()),
           ),
+          if (store.isAdmin)
+            ListTile(
+              leading: const Icon(Icons.location_city_outlined),
+              title: const Text('Master data perumahan'),
+              subtitle: const Text('Cluster, blok, dan nomor rumah'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => push(const MasterDataScreen()),
+            ),
           if (store.isAdmin)
             ListTile(
               leading: const Icon(Icons.badge_outlined),

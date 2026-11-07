@@ -45,9 +45,56 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    function validName(max) {
+      return request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.name.size() <= max;
+    }
+
     match /estates/{estateId} {
       allow read: if inEstate(estateId);
-      allow write: if false;
+      // Master perumahan: pengelola boleh mengubah nama, alamat, dan tarif IPL.
+      allow update: if isAdmin(estateId)
+        && onlyChanges(['name', 'address', 'monthlyFee'])
+        && validName(100)
+        && (!('address' in request.resource.data)
+          || (request.resource.data.address is string
+            && request.resource.data.address.size() <= 300))
+        && request.resource.data.monthlyFee is int
+        && request.resource.data.monthlyFee > 0;
+      allow create, delete: if false;
+
+      // Master Cluster > Blok > No. rumah. Semua anggota perumahan bisa
+      // membaca (untuk daftar pilihan), hanya pengelola yang bisa mengubah.
+      match /clusters/{clusterId} {
+        allow read: if inEstate(estateId);
+        allow create, update: if isAdmin(estateId)
+          && request.resource.data.keys().hasOnly(['name'])
+          && validName(60);
+        allow delete: if isAdmin(estateId);
+      }
+
+      match /blocks/{blockId} {
+        allow read: if inEstate(estateId);
+        allow create, update: if isAdmin(estateId)
+          && request.resource.data.keys().hasOnly(['clusterId', 'name'])
+          && request.resource.data.clusterId is string
+          && exists(/databases/$(database)/documents/estates/$(estateId)/clusters/$(request.resource.data.clusterId))
+          && validName(20);
+        allow delete: if isAdmin(estateId);
+      }
+
+      match /houses/{houseId} {
+        allow read: if inEstate(estateId);
+        allow create, update: if isAdmin(estateId)
+          && request.resource.data.keys().hasOnly(['clusterId', 'blockId', 'number'])
+          && request.resource.data.blockId is string
+          && request.resource.data.clusterId is string
+          && request.resource.data.number is string
+          && request.resource.data.number.size() > 0
+          && request.resource.data.number.size() <= 10;
+        allow delete: if isAdmin(estateId);
+      }
 
       match /residents/{residentId} {
         allow read: if isAdmin(estateId)

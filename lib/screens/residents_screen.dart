@@ -4,6 +4,7 @@ import '../models.dart';
 import '../store.dart';
 import '../utils.dart';
 import '../widgets.dart';
+import 'house_picker.dart';
 
 class ResidentsScreen extends StatefulWidget {
   const ResidentsScreen({super.key});
@@ -17,7 +18,7 @@ class _ResidentsScreenState extends State<ResidentsScreen> {
 
   Future<void> _addResident() async {
     final name = TextEditingController();
-    final house = TextEditingController();
+    String? houseId;
     final phone = TextEditingController();
     final email = TextEditingController();
     final formKey = GlobalKey<FormState>();
@@ -26,7 +27,8 @@ class _ResidentsScreenState extends State<ResidentsScreen> {
 
     final ok = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialog) => AlertDialog(
         title: const Text('Tambah warga'),
         content: Form(
           key: formKey,
@@ -40,12 +42,12 @@ class _ResidentsScreenState extends State<ResidentsScreen> {
                       const InputDecoration(labelText: 'Nama kepala keluarga'),
                   validator: req,
                 ),
-                TextFormField(
-                  controller: house,
-                  decoration: const InputDecoration(
-                      labelText: 'Blok / No. rumah', hintText: 'C1/02'),
-                  validator: req,
+                const SizedBox(height: 12),
+                HousePickerField(
+                  houseId: houseId,
+                  onChanged: (v) => setDialog(() => houseId = v),
                 ),
+                const SizedBox(height: 12),
                 TextFormField(
                   controller: phone,
                   keyboardType: TextInputType.phone,
@@ -79,6 +81,7 @@ class _ResidentsScreenState extends State<ResidentsScreen> {
           ),
         ],
       ),
+      ),
     );
 
     if (ok != true || !mounted) return;
@@ -88,7 +91,7 @@ class _ResidentsScreenState extends State<ResidentsScreen> {
     try {
       tempPassword = await store.addResident(
         n,
-        house.text.trim(),
+        houseId!,
         phone.text.trim(),
         email: store.isFirebase ? email.text.trim() : null,
       );
@@ -148,7 +151,14 @@ class _ResidentsScreenState extends State<ResidentsScreen> {
             ListTile(
               leading: CircleAvatar(child: Text(r.name[0])),
               title: Text(r.name, style: Theme.of(ctx).textTheme.titleMedium),
-              subtitle: Text('Rumah ${r.houseNo} · ${r.phone}'),
+              subtitle: Text([
+                'Rumah ${r.houseNo}',
+                if (r.houseId != null)
+                  store
+                      .clusterById(store.houseById(r.houseId!)?.clusterId ?? '')
+                      ?.name,
+                r.phone,
+              ].whereType<String>().join(' · ')),
             ),
             const Divider(),
             Padding(
@@ -180,7 +190,7 @@ class _ResidentsScreenState extends State<ResidentsScreen> {
                 r.name.toLowerCase().contains(q) ||
                 r.houseNo.toLowerCase().contains(q))
             .toList()
-          ..sort((a, b) => a.houseNo.compareTo(b.houseNo));
+          ..sort((a, b) => compareHouseNumber(a.houseNo, b.houseNo));
 
         return Scaffold(
           appBar: AppBar(title: Text('Data Warga (${store.residents.length})')),

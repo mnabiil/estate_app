@@ -38,13 +38,20 @@ class Resident {
     required this.houseNo,
     required this.phone,
     this.email,
+    this.houseId,
   });
 
   final String id;
   String name;
+
+  /// Label rumah untuk ditampilkan, mis. "A1/05". Disalin dari master rumah
+  /// saat warga ditambahkan (data lama mungkin hanya punya field ini).
   String houseNo;
   String phone;
   String? email;
+
+  /// ID dokumen di master `houses` (null untuk data lama yang diisi manual).
+  String? houseId;
 
   factory Resident.fromMap(String id, Map<String, dynamic> m) => Resident(
         id: id,
@@ -52,7 +59,67 @@ class Resident {
         houseNo: m['houseNo'] as String? ?? '',
         phone: m['phone'] as String? ?? '',
         email: m['email'] as String?,
+        houseId: m['houseId'] as String?,
       );
+}
+
+// ---------- Master perumahan: Cluster > Blok > No. rumah ----------
+
+class Cluster {
+  Cluster({required this.id, required this.name});
+
+  final String id;
+  String name;
+
+  factory Cluster.fromMap(String id, Map<String, dynamic> m) =>
+      Cluster(id: id, name: m['name'] as String? ?? '');
+}
+
+class HouseBlock {
+  HouseBlock({required this.id, required this.clusterId, required this.name});
+
+  final String id;
+  final String clusterId;
+  String name;
+
+  factory HouseBlock.fromMap(String id, Map<String, dynamic> m) => HouseBlock(
+        id: id,
+        clusterId: m['clusterId'] as String? ?? '',
+        name: m['name'] as String? ?? '',
+      );
+}
+
+class House {
+  House({
+    required this.id,
+    required this.clusterId,
+    required this.blockId,
+    required this.number,
+  });
+
+  final String id;
+  final String clusterId;
+  final String blockId;
+
+  /// Nomor rumah sebagai teks, mis. "05" atau "12A".
+  final String number;
+
+  factory House.fromMap(String id, Map<String, dynamic> m) => House(
+        id: id,
+        clusterId: m['clusterId'] as String? ?? '',
+        blockId: m['blockId'] as String? ?? '',
+        number: m['number'] as String? ?? '',
+      );
+}
+
+/// Urutan alami: "2" < "10" < "10A".
+int compareHouseNumber(String a, String b) {
+  final na = int.tryParse(RegExp(r'^\d+').stringMatch(a) ?? '');
+  final nb = int.tryParse(RegExp(r'^\d+').stringMatch(b) ?? '');
+  if (na != null && nb != null && na != nb) return na.compareTo(nb);
+  if (na != null && nb == null) return -1;
+  if (na == null && nb != null) return 1;
+  return a.compareTo(b);
 }
 
 enum BillStatus {
