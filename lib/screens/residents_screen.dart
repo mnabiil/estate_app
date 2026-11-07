@@ -5,6 +5,7 @@ import '../store.dart';
 import '../utils.dart';
 import '../widgets.dart';
 import 'house_picker.dart';
+import 'registrations_screen.dart';
 
 class ResidentsScreen extends StatefulWidget {
   const ResidentsScreen({super.key});
@@ -336,6 +337,20 @@ class _ResidentsScreenState extends State<ResidentsScreen> {
                   onChanged: (v) => setState(() => _query = v),
                 ),
               ),
+              if (store.pendingRegistrations.isNotEmpty)
+                Card(
+                  margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                  color: Theme.of(context).colorScheme.secondaryContainer,
+                  child: ListTile(
+                    leading: const Icon(Icons.how_to_reg_outlined),
+                    title: Text(
+                        '${store.pendingRegistrations.length} pendaftaran warga '
+                        'menunggu verifikasi'),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                        builder: (_) => const RegistrationsScreen())),
+                  ),
+                ),
               if (unlinked > 0)
                 _UnlinkedBanner(
                   count: unlinked,

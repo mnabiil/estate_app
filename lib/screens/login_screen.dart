@@ -4,6 +4,7 @@ import '../models.dart';
 import '../store.dart';
 import '../theme.dart';
 import '../widgets.dart';
+import 'register_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -160,9 +161,12 @@ class _LoginScreenState extends State<LoginScreen> {
         const SizedBox(height: 8),
         Card(
           clipBehavior: Clip.antiAlias,
-          child: Column(
-            children: [
-              for (final r in store.residents.take(4))
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 280),
+            child: ListView(
+              shrinkWrap: true,
+              children: [
+              for (final r in store.residents)
                 ListTile(
                   title: Text(r.name),
                   subtitle: Text('Rumah ${r.houseNo}'),
@@ -172,7 +176,8 @@ class _LoginScreenState extends State<LoginScreen> {
                       : null,
                   onTap: () => setState(() => _residentId = r.id),
                 ),
-            ],
+              ],
+            ),
           ),
         ),
       ] else
@@ -195,6 +200,7 @@ class _LoginScreenState extends State<LoginScreen> {
         style:
             theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
       ),
+      const _RegisterLink(),
     ];
   }
 }
@@ -311,14 +317,32 @@ class _EmailLoginFormState extends State<_EmailLoginForm> {
               onPressed: _busy ? null : _resetPassword,
               child: const Text('Lupa password'),
             ),
-            const SizedBox(height: 8),
-            Text(
-              'Akun warga dibuatkan oleh pengelola perumahan.',
-              textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
+            const _RegisterLink(),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// Tautan registrasi mandiri warga.
+class _RegisterLink extends StatelessWidget {
+  const _RegisterLink();
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 16),
+      child: Column(
+        children: [
+          Text('Warga baru?', style: Theme.of(context).textTheme.bodySmall),
+          OutlinedButton.icon(
+            onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const RegisterScreen())),
+            icon: const Icon(Icons.how_to_reg_outlined),
+            label: const Text('Daftar sebagai warga'),
+          ),
+        ],
       ),
     );
   }

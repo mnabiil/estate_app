@@ -21,8 +21,11 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
     }
 
+    // Pendaftar (registrasi mandiri yang belum disetujui) tidak termasuk:
+    // belum boleh membaca data perumahan.
     function inEstate(estateId) {
       return signedIn()
+        && me().role in ['warga', 'pengelola']
         && (me().estateId == estateId
           || (me().role == 'pengelola' && estateId in me().get('estateIds', [])));
     }
@@ -47,7 +50,12 @@ service cloud.firestore {
 
     match /users/{uid} {
       allow read: if signedIn() && request.auth.uid == uid;
-      allow write: if false;
+      // Satu-satunya perubahan dari aplikasi: menandai password sementara
+      // sudah diganti. Peran & perumahan hanya ditulis server.
+      allow update: if signedIn() && request.auth.uid == uid
+        && onlyChanges(['mustChangePassword'])
+        && request.resource.data.mustChangePassword == false;
+      allow create, delete: if false;
     }
 
     function validName(max) {
@@ -62,7 +70,9 @@ service cloud.firestore {
       // dan deposit ijin renovasi.
       allow update: if isAdmin(estateId)
         && onlyChanges(['name', 'address', 'monthlyFee',
-          'renovationDepositSmall', 'renovationDepositLarge'])
+          'renovationDepositSmall', 'renovationDepositLarge',
+          'registrationOpen'])
+        && request.resource.data.get('registrationOpen', true) is bool
         && (request.resource.data.get('renovationDepositSmall', 1) is int
           && request.resource.data.get('renovationDepositSmall', 1) > 0)
         && (request.resource.data.get('renovationDepositLarge', 1) is int
@@ -178,6 +188,21 @@ service cloud.firestore {
           && onlyChanges(['checkedInAt'])
           && request.resource.data.checkedInAt == request.time;
         allow delete: if isAdmin(estateId) || ownsExisting(estateId);
+      }
+
+      // Pendaftaran warga mandiri (ID dokumen = uid pendaftar). Dibuat &
+      // disetujui lewat Cloud Function; pengelola boleh menolak langsung.
+      match /registrations/{uid} {
+        allow read: if isAdmin(estateId)
+          || (signedIn() && request.auth.uid == uid);
+        allow update: if isAdmin(estateId)
+          && onlyChanges(['status', 'note', 'reviewedAt'])
+          && resource.data.status == 'menunggu'
+          && request.resource.data.status == 'ditolak'
+          && request.resource.data.note is string
+          && request.resource.data.note.size() > 0
+          && request.resource.data.reviewedAt == request.time;
+        allow create, delete: if false;
       }
 
       // Ijin renovasi. Warga mengajukan; deposit wajib sesuai jenis renovasi

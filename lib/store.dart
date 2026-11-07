@@ -32,6 +32,7 @@ class EstateStore extends ChangeNotifier {
   EstateStore() {
     _seedDemo();
     _seedDemoRenovations();
+    _seedDemoRegistration();
     _seedSecondDemoEstate();
   }
 
@@ -42,6 +43,15 @@ class EstateStore extends ChangeNotifier {
   final List<Visitor> visitors = [];
   final List<Announcement> announcements = [];
   final List<Renovation> renovations = [];
+
+  /// Pengelola: pendaftaran warga mandiri di perumahan aktif.
+  final List<Registration> registrations = [];
+
+  /// Pendaftar: pendaftaran miliknya sendiri (menunggu / ditolak).
+  Registration? myRegistration;
+
+  /// Perumahan menerima pendaftaran warga mandiri.
+  bool registrationOpen = true;
   final List<RenovationLog> renovationLogs = [];
 
   // Master perumahan.
@@ -76,6 +86,9 @@ class EstateStore extends ChangeNotifier {
 
   /// Langganan nama tiap perumahan yang dikelola (untuk daftar perumahan).
   final List<StreamSubscription<dynamic>> _estateSubs = [];
+
+  /// Langganan profil & pendaftaran milik pendaftar (menunggu verifikasi).
+  final List<StreamSubscription<dynamic>> _profileSubs = [];
 
   bool get isFirebase => _db != null;
 
@@ -114,6 +127,18 @@ class EstateStore extends ChangeNotifier {
           'Akun ini belum terdaftar di perumahan mana pun. Hubungi pengelola.');
     }
     final role = Role.values.byName(d['role'] as String);
+    final email = _auth!.currentUser?.email;
+    if (role == Role.pendaftar) {
+      _estateId = d['estateId'] as String?;
+      currentUser = AppUser(
+        name: d['name'] as String? ?? '',
+        role: role,
+        email: email,
+      );
+      _watchRegistration(uid);
+      notifyListeners();
+      return;
+    }
     // Pengelola bisa mengelola beberapa perumahan (estateIds); estateId
     // adalah perumahan utama / default.
     final ids = <String>{
@@ -129,6 +154,8 @@ class EstateStore extends ChangeNotifier {
       name: d['name'] as String? ?? '',
       role: role,
       residentId: d['residentId'] as String?,
+      email: email,
+      mustChangePassword: d['mustChangePassword'] == true,
     );
     estates
       ..clear()
@@ -138,6 +165,45 @@ class EstateStore extends ChangeNotifier {
     }
     _listen();
     notifyListeners();
+  }
+
+  /// Pendaftar: pantau pendaftaran & profil. Saat disetujui (peran berubah
+  /// menjadi warga), profil dimuat ulang dan aplikasi terbuka penuh.
+  void _watchRegistration(String uid) {
+    _cancelProfileSubs();
+    if (_estateId != null) {
+      _profileSubs.add(_db!
+          .collection('estates')
+          .doc(_estateId)
+          .collection('registrations')
+          .doc(uid)
+          .snapshots()
+          .listen((snap) {
+        final d = snap.data();
+        myRegistration = d == null ? null : Registration.fromMap(snap.id, d);
+        notifyListeners();
+      }, onError: _onStreamError));
+    }
+    _profileSubs.add(
+        _db!.collection('users').doc(uid).snapshots().listen((snap) async {
+      final role = snap.data()?['role'];
+      if (role != null && role != Role.pendaftar.name) {
+        _cancelProfileSubs();
+        myRegistration = null;
+        try {
+          await _loadProfile(uid);
+        } catch (e) {
+          debugPrint('Gagal memuat profil setelah disetujui: $e');
+        }
+      }
+    }, onError: _onStreamError));
+  }
+
+  void _cancelProfileSubs() {
+    for (final s in _profileSubs) {
+      s.cancel();
+    }
+    _profileSubs.clear();
   }
 
   void _watchEstateName(String id) {
@@ -165,6 +231,7 @@ class EstateStore extends ChangeNotifier {
       final d = s.data() ?? const {};
       estateName = d['name'] as String? ?? 'Perumahan';
       estateAddress = d['address'] as String? ?? '';
+      registrationOpen = d['registrationOpen'] as bool? ?? true;
       fee = (d['monthlyFee'] as num?)?.toInt() ?? monthlyFee;
       depositSmall = (d['renovationDepositSmall'] as num?)?.toInt() ??
           defaultDepositSmall;
@@ -174,6 +241,8 @@ class EstateStore extends ChangeNotifier {
     }, onError: _onStreamError));
 
     if (isAdmin) {
+      _bind(_est.collection('registrations'), registrations,
+          Registration.fromMap);
       _bind(_est.collection('residents'), residents, Resident.fromMap);
     } else {
       _subs.add(_est.collection('residents').doc(rid).snapshots().listen((s) {
@@ -232,6 +301,7 @@ class EstateStore extends ChangeNotifier {
     houseTypes.clear();
     renovations.clear();
     renovationLogs.clear();
+    registrations.clear();
     bills.clear();
     complaints.clear();
     visitors.clear();
@@ -262,6 +332,7 @@ class EstateStore extends ChangeNotifier {
   Future<void> signInWithEmail(String email, String password) async {
     final cred = await _auth!
         .signInWithEmailAndPassword(email: email, password: password);
+    _lastPassword = password;
     try {
       await _loadProfile(cred.user!.uid);
     } catch (_) {
@@ -275,8 +346,12 @@ class EstateStore extends ChangeNotifier {
 
   Future<void> logout() async {
     currentUser = null;
+    myRegistration = null;
+    _demoRegistrantId = null;
+    _lastPassword = null;
     if (isFirebase) {
       _cancelSubs();
+      _cancelProfileSubs();
       for (final s in _estateSubs) {
         s.cancel();
       }
@@ -738,6 +813,342 @@ class EstateStore extends ChangeNotifier {
     });
   }
 
+  // ---------- Password ----------
+
+  /// Mengganti password. [current] boleh null hanya saat wajib ganti setelah
+  /// login pertama (password sementara diingat sejak login).
+  Future<void> changePassword({String? current, required String newPassword}) async {
+    final user = currentUser;
+    if (user == null) throw StateError('Silakan login terlebih dahulu.');
+    final problem = passwordProblem(newPassword);
+    if (problem != null) throw StateError('Password baru: $problem.');
+    final old = current ?? _lastPassword;
+    if (old != null && old == newPassword) {
+      throw StateError('Password baru harus berbeda dari password lama.');
+    }
+    if (!isFirebase) {
+      if (current != null && current.isEmpty) {
+        throw StateError('Isi password lama.');
+      }
+      currentUser = user.copyWith(mustChangePassword: false);
+      notifyListeners();
+      return;
+    }
+    final authUser = _auth!.currentUser!;
+    if (old == null) throw StateError('Isi password lama.');
+    try {
+      await authUser.reauthenticateWithCredential(
+          EmailAuthProvider.credential(email: authUser.email!, password: old));
+    } on FirebaseAuthException catch (e) {
+      if (e.code == 'wrong-password' || e.code == 'invalid-credential') {
+        throw StateError('Password lama salah.');
+      }
+      rethrow;
+    }
+    await authUser.updatePassword(newPassword);
+    _lastPassword = newPassword;
+    if (user.mustChangePassword) {
+      await _db!
+          .collection('users')
+          .doc(authUser.uid)
+          .update({'mustChangePassword': false});
+    }
+    currentUser = user.copyWith(mustChangePassword: false);
+    notifyListeners();
+  }
+
+  /// Password terakhir yang dipakai login (hanya di memori, untuk
+  /// konfirmasi ulang saat wajib ganti password).
+  String? _lastPassword;
+
+  // ---------- Registrasi mandiri warga ----------
+
+  /// Perumahan yang menerima pendaftaran warga mandiri.
+  Future<List<RegistrationEstate>> registrationEstates() async {
+    if (!isFirebase) {
+      return [
+        for (final e in estates)
+          if (_demoEstateOpen(e.id))
+            RegistrationEstate(
+              id: e.id,
+              name: e.id == _estateId ? estateName : e.name,
+              address: e.id == _estateId
+                  ? estateAddress
+                  : (_demoEstates[e.id]?.address ?? ''),
+            ),
+      ];
+    }
+    final res = await _fn!
+        .httpsCallable('listRegistrationEstates')
+        .call<Map<String, dynamic>>();
+    return [
+      for (final e in (res.data['estates'] as List<dynamic>? ?? const []))
+        RegistrationEstate(
+          id: (e as Map)['id'] as String,
+          name: e['name'] as String? ?? '',
+          address: e['address'] as String? ?? '',
+        ),
+    ];
+  }
+
+  bool _demoEstateOpen(String id) => id == _estateId
+      ? registrationOpen
+      : (_demoEstates[id]?.registrationOpen ?? true);
+
+  /// Master data + rumah yang tersedia untuk didaftarkan.
+  Future<RegistrationOptions> registrationOptions(String estateId) async {
+    if (!isFirebase) {
+      final active = estateId == _estateId;
+      final d = active ? null : _demoEstates[estateId];
+      final hs = active ? houses : d?.houses ?? const <House>[];
+      final rs = active ? residents : d?.residents ?? const <Resident>[];
+      final regs = active ? registrations : d?.registrations ?? const <Registration>[];
+      final occupied = {
+        for (final r in rs)
+          if (r.houseId != null) r.houseId!,
+        for (final g in regs)
+          if (g.status == RegistrationStatus.menunggu &&
+              g.id != _demoRegistrantId)
+            g.houseId,
+      };
+      return RegistrationOptions(
+        clusters: List.of(active ? clusters : d?.clusters ?? const []),
+        types: List.of(active ? houseTypes : d?.houseTypes ?? const []),
+        blocks: List.of(active ? blocks : d?.blocks ?? const []),
+        houses: List.of(hs),
+        available: {
+          for (final h in hs)
+            if (!occupied.contains(h.id)) h.id,
+        },
+      );
+    }
+    final res = await _fn!
+        .httpsCallable('getRegistrationOptions')
+        .call<Map<String, dynamic>>({'estateId': estateId});
+    return RegistrationOptions.fromMap(res.data);
+  }
+
+  /// Mode demo: ID pendaftaran milik "pendaftar" yang sedang login.
+  String? _demoRegistrantId;
+
+  /// Pendaftaran warga mandiri. Membuat akun (email & password) bila belum
+  /// ada, lalu mengirim data untuk diverifikasi pengelola. Juga dipakai
+  /// untuk mengajukan ulang setelah ditolak (tanpa email/password).
+  Future<void> registerResident({
+    required String estateId,
+    required String houseId,
+    required String name,
+    required String phone,
+    required Occupancy occupancy,
+    String? email,
+    String? password,
+    XFile? document,
+  }) async {
+    final resubmit = currentUser?.role == Role.pendaftar;
+    if (!resubmit) {
+      if (email == null || !email.contains('@')) {
+        throw StateError('Email tidak valid.');
+      }
+      final problem = passwordProblem(password ?? '');
+      if (problem != null) throw StateError('Password: $problem.');
+    }
+    if (name.trim().isEmpty || phone.trim().isEmpty) {
+      throw StateError('Nama dan No. HP wajib diisi.');
+    }
+
+    if (!isFirebase) {
+      _demoRegister(
+        estateId: estateId,
+        houseId: houseId,
+        name: name,
+        phone: phone,
+        occupancy: occupancy,
+        email: resubmit ? currentUser!.email! : email!.toLowerCase(),
+        document: document,
+        resubmit: resubmit,
+      );
+      return;
+    }
+
+    // 1. Akun login (atau pakai akun yang sudah ada bila pendaftaran
+    //    sebelumnya terputus / ditolak).
+    if (!resubmit) {
+      try {
+        await _auth!.createUserWithEmailAndPassword(
+            email: email!.trim(), password: password!);
+      } on FirebaseAuthException catch (e) {
+        if (e.code != 'email-already-in-use') rethrow;
+        try {
+          await _auth!.signInWithEmailAndPassword(
+              email: email!.trim(), password: password!);
+        } on FirebaseAuthException {
+          throw StateError('Email sudah terdaftar. Silakan login, atau '
+              'gunakan "Lupa password".');
+        }
+      }
+      _lastPassword = password;
+    }
+    final uid = _auth!.currentUser!.uid;
+
+    // 2. Dokumen pendukung (opsional).
+    String? docUrl;
+    if (document != null) {
+      final ref = _storage!.ref(
+          'estates/$estateId/registrations/$uid/dokumen-${DateTime.now().millisecondsSinceEpoch}.jpg');
+      await ref.putData(await document.readAsBytes(),
+          SettableMetadata(contentType: 'image/jpeg'));
+      docUrl = await ref.getDownloadURL();
+    }
+
+    // 3. Kirim pendaftaran (divalidasi server).
+    await _fn!.httpsCallable('submitRegistration').call<void>({
+      'estateId': estateId,
+      'houseId': houseId,
+      'name': name.trim(),
+      'phone': phone.trim(),
+      'occupancy': occupancy.name,
+      'docUrl': docUrl,
+    });
+    await _loadProfile(uid);
+  }
+
+  void _demoRegister({
+    required String estateId,
+    required String houseId,
+    required String name,
+    required String phone,
+    required Occupancy occupancy,
+    required String email,
+    required bool resubmit,
+    XFile? document,
+  }) {
+    final active = estateId == _estateId;
+    final d = active ? null : _demoEstates[estateId];
+    final regs = active ? registrations : d!.registrations;
+    final hs = active ? houses : d!.houses;
+    final bs = active ? blocks : d!.blocks;
+    final cs = active ? clusters : d!.clusters;
+    final rs = active ? residents : d!.residents;
+    if (!resubmit &&
+        (rs.any((r) => (r.email ?? '').toLowerCase() == email) ||
+            regs.any((g) =>
+                g.email == email && g.status != RegistrationStatus.ditolak))) {
+      throw StateError('Email sudah terdaftar.');
+    }
+    final h = hs.where((h) => h.id == houseId).firstOrNull;
+    if (h == null) throw StateError('Rumah tidak ditemukan.');
+    final taken = rs.any((r) => r.houseId == houseId) ||
+        regs.any((g) =>
+            g.houseId == houseId &&
+            g.status == RegistrationStatus.menunggu &&
+            g.id != _demoRegistrantId);
+    if (taken) throw StateError('Rumah ini sudah berpenghuni atau sedang diajukan.');
+    final label =
+        '${bs.where((b) => b.id == h.blockId).firstOrNull?.name ?? '?'}/${h.number}';
+    final clusterName =
+        cs.where((c) => c.id == h.clusterId).firstOrNull?.name ?? '';
+    var reg = resubmit
+        ? regs.where((g) => g.id == _demoRegistrantId).firstOrNull
+        : null;
+    if (reg == null) {
+      reg = Registration(
+        id: _newId('REG'),
+        estateId: estateId,
+        name: name,
+        phone: phone,
+        email: email,
+        houseId: houseId,
+        houseNo: label,
+        clusterName: clusterName,
+        occupancy: occupancy,
+        docUrl: document?.path,
+        createdAt: DateTime.now(),
+      );
+      regs.add(reg);
+    } else {
+      reg
+        ..name = name
+        ..phone = phone
+        ..houseId = houseId
+        ..houseNo = label
+        ..clusterName = clusterName
+        ..occupancy = occupancy
+        ..docUrl = document?.path ?? reg.docUrl
+        ..status = RegistrationStatus.menunggu
+        ..note = ''
+        ..createdAt = DateTime.now()
+        ..reviewedAt = null;
+    }
+    _demoRegistrantId = reg.id;
+    myRegistration = reg;
+    currentUser = AppUser(name: name, role: Role.pendaftar, email: email);
+    notifyListeners();
+  }
+
+  Registration? registrationById(String id) =>
+      registrations.where((r) => r.id == id).firstOrNull;
+
+  List<Registration> get pendingRegistrations => registrations
+      .where((r) => r.status == RegistrationStatus.menunggu)
+      .toList()
+    ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+
+  /// Pengelola menyetujui: akun pendaftar menjadi warga di rumah pilihannya.
+  Future<void> approveRegistration(String id) async {
+    _requireAdmin();
+    final reg = registrationById(id);
+    if (reg == null || reg.status != RegistrationStatus.menunggu) {
+      throw StateError('Pendaftaran tidak ditemukan atau sudah diproses.');
+    }
+    if (!isFirebase) {
+      final h = houseById(reg.houseId);
+      if (h == null) throw StateError('Rumah sudah tidak ada di master data.');
+      final occupant = residentOfHouse(h.id);
+      if (occupant != null) {
+        throw StateError('Rumah ${houseLabel(h)} sudah ditempati ${occupant.name}.');
+      }
+      residents.add(Resident(
+        id: _newId('R'),
+        name: reg.name,
+        houseNo: houseLabel(h),
+        houseId: h.id,
+        phone: reg.phone,
+        email: reg.email,
+      ));
+      reg
+        ..status = RegistrationStatus.disetujui
+        ..reviewedAt = DateTime.now();
+      notifyListeners();
+      return;
+    }
+    await _fn!.httpsCallable('approveRegistration').call<void>({
+      'estateId': _estateId,
+      'uid': id,
+    });
+  }
+
+  Future<void> rejectRegistration(String id, String reason) async {
+    _requireAdmin();
+    final reg = registrationById(id);
+    if (reg == null || reg.status != RegistrationStatus.menunggu) {
+      throw StateError('Pendaftaran tidak ditemukan atau sudah diproses.');
+    }
+    if (reason.trim().isEmpty) throw StateError('Isi alasan penolakan.');
+    if (!isFirebase) {
+      reg
+        ..status = RegistrationStatus.ditolak
+        ..note = reason
+        ..reviewedAt = DateTime.now();
+      notifyListeners();
+      return;
+    }
+    await _est.collection('registrations').doc(id).update({
+      'status': RegistrationStatus.ditolak.name,
+      'note': reason,
+      'reviewedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
   // ---------- Import dari Excel ----------
 
   /// Menjalankan rencana import (lihat lib/excel_io.dart) ke perumahan aktif.
@@ -1162,7 +1573,9 @@ class EstateStore extends ChangeNotifier {
     required int fee,
     int? depositSmall,
     int? depositLarge,
+    bool? registrationOpen,
   }) async {
+    final open = registrationOpen ?? this.registrationOpen;
     final small = depositSmall ?? this.depositSmall;
     final large = depositLarge ?? this.depositLarge;
     if (small <= 0 || large <= 0) {
@@ -1178,6 +1591,7 @@ class EstateStore extends ChangeNotifier {
       this.fee = fee;
       this.depositSmall = small;
       this.depositLarge = large;
+      this.registrationOpen = open;
       for (final e in estates) {
         if (e.id == _estateId) e.name = name;
       }
@@ -1190,6 +1604,7 @@ class EstateStore extends ChangeNotifier {
       'monthlyFee': fee,
       'renovationDepositSmall': small,
       'renovationDepositLarge': large,
+      'registrationOpen': open,
     });
   }
 
@@ -1628,6 +2043,24 @@ class EstateStore extends ChangeNotifier {
     ));
   }
 
+  /// Contoh pendaftaran warga mandiri yang menunggu verifikasi.
+  void _seedDemoRegistration() {
+    final b1 = blocks.firstWhere((b) => b.name == 'B1');
+    final h = housesOf(b1.id).firstWhere((h) => h.number == '11');
+    registrations.add(Registration(
+      id: 'REG-DEMO',
+      estateId: _estateId!,
+      name: 'Hendra Gunawan',
+      phone: '0813-9090-1122',
+      email: 'hendra.g@contoh.id',
+      houseId: h.id,
+      houseNo: houseLabel(h),
+      clusterName: clusterById(h.clusterId)?.name ?? '',
+      occupancy: Occupancy.penyewa,
+      createdAt: DateTime.now().subtract(const Duration(hours: 5)),
+    ));
+  }
+
   /// Perumahan contoh kedua milik pengelola yang sama: master data saja.
   void _seedSecondDemoEstate() {
     final d = _DemoEstate(
@@ -1896,13 +2329,17 @@ class _DemoEstate {
         ..renovations.addAll(s.renovations)
         ..renovationLogs.addAll(s.renovationLogs)
         ..depositSmall = s.depositSmall
-        ..depositLarge = s.depositLarge;
+        ..depositLarge = s.depositLarge
+        ..registrationOpen = s.registrationOpen
+        ..registrations.addAll(s.registrations);
 
   final String name;
   final String address;
   final int fee;
   int depositSmall = defaultDepositSmall;
   int depositLarge = defaultDepositLarge;
+  bool registrationOpen = true;
+  final registrations = <Registration>[];
   final renovations = <Renovation>[];
   final renovationLogs = <RenovationLog>[];
   final residents = <Resident>[];
@@ -1932,5 +2369,7 @@ class _DemoEstate {
     s.renovationLogs.addAll(renovationLogs);
     s.depositSmall = depositSmall;
     s.depositLarge = depositLarge;
+    s.registrationOpen = registrationOpen;
+    s.registrations.addAll(registrations);
   }
 }

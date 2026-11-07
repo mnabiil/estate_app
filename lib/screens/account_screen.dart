@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import '../store.dart';
 import 'announcements_screen.dart';
 import 'master_data_screen.dart';
+import 'password_screen.dart';
+import 'registrations_screen.dart';
 import 'renovations_screen.dart';
 import 'visitors_screen.dart';
 
@@ -74,6 +76,22 @@ class AccountScreen extends StatelessWidget {
               trailing: const Icon(Icons.chevron_right),
               onTap: () => push(const VisitorsScreen()),
             ),
+          if (store.isAdmin)
+            ListTile(
+              leading: const Icon(Icons.how_to_reg_outlined),
+              title: const Text('Pendaftaran warga'),
+              subtitle: Text(store.pendingRegistrations.isEmpty
+                  ? 'Tidak ada yang menunggu'
+                  : '${store.pendingRegistrations.length} menunggu verifikasi'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => push(const RegistrationsScreen()),
+            ),
+          ListTile(
+            leading: const Icon(Icons.password),
+            title: const Text('Ganti password'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => push(const ChangePasswordScreen()),
+          ),
           ListTile(
             leading: const Icon(Icons.info_outline),
             title: const Text('Tentang aplikasi'),

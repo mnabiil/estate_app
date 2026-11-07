@@ -16,6 +16,7 @@ Dua peran: **Warga** dan **Pengelola**. Data masih contoh (in-memory), belum ada
 | Pengumuman | Baca | Buat pengumuman |
 | Ijin renovasi | Ajukan (kecil/besar, detail, jangka waktu, lampiran file); setelah disetujui bayar deposit + bukti; catat barang masuk/keluar dengan foto | Tinjau & setujui/tolak, verifikasi deposit (atau terima tunai), perpanjang, tandai selesai, kembalikan deposit (bisa dipotong), catat barang dengan foto |
 | Data warga | — | Cari, tambah (pilih rumah dari daftar), lihat riwayat IPL |
+| Akun | Daftar sendiri (menunggu verifikasi), ganti password | Verifikasi pendaftaran warga (setujui/tolak), ganti password |
 | Master data | — | Perumahan (bisa lebih dari satu) → Cluster → Tipe rumah (LB/LT) → Blok → No. rumah (tambah nomor sekaligus per rentang); **import/ekspor Excel** |
 
 ## Tampilan
@@ -33,6 +34,22 @@ yang hidup bertetangga). Warna: teal `#234F68`, lime `#8BC83F`, navy `#252B5C`.
 
 File di `assets/branding/`: `icon.svg` / `icon_1024.png` (ikon aplikasi), `logo_mark.svg`
 (simbol), `logo_horizontal*.png` & `logo_stacked.png` (logo lengkap).
+
+## Akun warga
+
+**Dibuat pengelola** (tab Warga → +, atau import Excel): server membuat akun dengan password
+sementara; warga **wajib membuat password baru** saat login pertama.
+
+**Registrasi mandiri** (layar login → *Daftar sebagai warga*):
+pilih Perumahan → Cluster → Tipe → Blok → No. rumah (hanya rumah kosong & tidak sedang
+diajukan), isi data diri (+ foto KTP/bukti hunian opsional) dan email/password →
+akun berstatus **pendaftar** (belum bisa membaca data perumahan) → pengelola
+**menyetujui** (akun menjadi warga, aplikasi terbuka otomatis) atau **menolak** dengan alasan
+(pendaftar bisa memperbaiki & mengajukan ulang). Pendaftaran bisa ditutup per perumahan di
+profil perumahan. Cloud Functions: `listRegistrationEstates`, `getRegistrationOptions`
+(tanpa login), `submitRegistration`, `approveRegistration`.
+
+Semua pengguna bisa **ganti password** di menu Akun.
 
 ## Import dari Excel
 
@@ -110,8 +127,10 @@ Aplikasi otomatis memilih mode:
 ### Struktur data Firestore
 
 ```
-users/{uid}                      { estateId, estateIds?, role, residentId?, name }
+users/{uid}                      { estateId, estateIds?, role: warga|pengelola|pendaftar, residentId?, name, mustChangePassword? }
 estates/{estateId}               { name, address, monthlyFee, renovationDepositSmall, renovationDepositLarge }
+  registrations/{uid}            { estateId, name, phone, email, houseId, houseNo, clusterName, occupancy,
+                                   docUrl, status: menunggu|disetujui|ditolak, note, createdAt, reviewedAt }
   clusters/{id}                  { name }
   blocks/{id}                    { clusterId, typeId, name }
   houseTypes/{id}                { clusterId, name, buildingArea, landArea }

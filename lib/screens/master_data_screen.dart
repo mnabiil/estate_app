@@ -619,6 +619,7 @@ Future<void> editEstate(BuildContext context, {bool create = false}) async {
       text: create ? '$defaultDepositSmall' : '${store.depositSmall}');
   final depLarge = TextEditingController(
       text: create ? '$defaultDepositLarge' : '${store.depositLarge}');
+  final regOpen = ValueNotifier<bool>(create ? true : store.registrationOpen);
   String? positive(String? v) {
     final n = int.tryParse((v ?? '').replaceAll('.', ''));
     return (n == null || n <= 0) ? 'Isi angka > 0' : null;
@@ -691,6 +692,19 @@ Future<void> editEstate(BuildContext context, {bool create = false}) async {
                 ),
                 validator: positive,
               ),
+              const SizedBox(height: 8),
+              ValueListenableBuilder<bool>(
+                valueListenable: regOpen,
+                builder: (_, open, __) => SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Terima pendaftaran warga mandiri'),
+                  subtitle: const Text(
+                      'Calon warga bisa mendaftar dari aplikasi, lalu '
+                      'diverifikasi pengelola.'),
+                  value: open,
+                  onChanged: (v) => regOpen.value = v,
+                ),
+              ),
             ],
           ),
         ),
@@ -720,7 +734,12 @@ Future<void> editEstate(BuildContext context, {bool create = false}) async {
         ? store.createEstate(
             name: n, address: a, fee: f, depositSmall: ds, depositLarge: dl)
         : store.updateEstate(
-            name: n, address: a, fee: f, depositSmall: ds, depositLarge: dl),
+            name: n,
+            address: a,
+            fee: f,
+            depositSmall: ds,
+            depositLarge: dl,
+            registrationOpen: regOpen.value),
     success: create ? '$n ditambahkan & aktif' : 'Profil perumahan disimpan',
   );
 }

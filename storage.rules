@@ -16,6 +16,17 @@ service firebase.storage {
         && (me().estateId == estateId || estateId in me().get('estateIds', []));
     }
 
+    // Dokumen pendaftaran warga mandiri (KTP / bukti hunian).
+    match /estates/{estateId}/registrations/{uid}/{fileName} {
+      allow read: if request.auth != null
+        && (request.auth.uid == uid || adminOf(estateId));
+      allow create: if request.auth != null
+        && request.auth.uid == uid
+        && request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+      allow update, delete: if false;
+    }
+
     // Ijin renovasi: lampiran pengajuan, bukti deposit, foto barang.
     // estates/{estateId}/renovations/{residentId}/{renovationId}/...
     match /estates/{estateId}/renovations/{residentId}/{renovationId}/{allPaths=**} {

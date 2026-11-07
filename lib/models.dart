@@ -1,13 +1,44 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-enum Role { warga, pengelola }
+/// `pendaftar`: mendaftar sendiri dan menunggu verifikasi pengelola; belum
+/// bisa mengakses data perumahan.
+enum Role { warga, pengelola, pendaftar }
 
 class AppUser {
-  const AppUser({required this.name, required this.role, this.residentId});
+  const AppUser({
+    required this.name,
+    required this.role,
+    this.residentId,
+    this.mustChangePassword = false,
+    this.email,
+  });
 
   final String name;
   final Role role;
   final String? residentId;
+  final String? email;
+
+  /// Akun dibuat pengelola dengan password sementara: wajib diganti saat
+  /// login pertama.
+  final bool mustChangePassword;
+
+  AppUser copyWith({bool? mustChangePassword}) => AppUser(
+        name: name,
+        role: role,
+        residentId: residentId,
+        email: email,
+        mustChangePassword: mustChangePassword ?? this.mustChangePassword,
+      );
+}
+
+/// Aturan password: min. 8 karakter, berisi huruf dan angka.
+String? passwordProblem(String password) {
+  if (password.length < 8) return 'Minimal 8 karakter';
+  if (!RegExp(r'[A-Za-z]').hasMatch(password) ||
+      !RegExp(r'\d').hasMatch(password)) {
+    return 'Harus berisi huruf dan angka';
+  }
+  return null;
 }
 
 // ---------- Helper serialisasi ----------
@@ -626,3 +657,151 @@ String formatFileSize(int bytes) {
 /// Deposit default bila belum diatur di profil perumahan.
 const defaultDepositSmall = 1000000;
 const defaultDepositLarge = 5000000;
+
+
+// ---------- Registrasi mandiri warga ----------
+
+enum Occupancy {
+  pemilik('Pemilik'),
+  penyewa('Penyewa'),
+  keluarga('Keluarga pemilik');
+
+  const Occupancy(this.label);
+  final String label;
+}
+
+enum RegistrationStatus {
+  menunggu('Menunggu verifikasi'),
+  disetujui('Disetujui'),
+  ditolak('Ditolak');
+
+  const RegistrationStatus(this.label);
+  final String label;
+}
+
+/// Pendaftaran warga baru. ID dokumen = uid akun pendaftar.
+class Registration {
+  Registration({
+    required this.id,
+    required this.estateId,
+    required this.name,
+    required this.phone,
+    required this.email,
+    required this.houseId,
+    required this.houseNo,
+    required this.occupancy,
+    required this.createdAt,
+    this.clusterName = '',
+    this.docUrl,
+    this.status = RegistrationStatus.menunggu,
+    this.note = '',
+    this.reviewedAt,
+  });
+
+  final String id;
+  final String estateId;
+  String name;
+  String phone;
+  final String email;
+  String houseId;
+  String houseNo;
+  String clusterName;
+  Occupancy occupancy;
+
+  /// Foto KTP / bukti hunian (opsional).
+  String? docUrl;
+  RegistrationStatus status;
+
+  /// Alasan penolakan dari pengelola.
+  String note;
+  DateTime createdAt;
+  DateTime? reviewedAt;
+
+  factory Registration.fromMap(String id, Map<String, dynamic> m) =>
+      Registration(
+        id: id,
+        estateId: m['estateId'] as String? ?? '',
+        name: m['name'] as String? ?? '',
+        phone: m['phone'] as String? ?? '',
+        email: m['email'] as String? ?? '',
+        houseId: m['houseId'] as String? ?? '',
+        houseNo: m['houseNo'] as String? ?? '',
+        clusterName: m['clusterName'] as String? ?? '',
+        occupancy:
+            Occupancy.values.byName(m['occupancy'] as String? ?? 'pemilik'),
+        docUrl: m['docUrl'] as String?,
+        status: RegistrationStatus.values
+            .byName(m['status'] as String? ?? 'menunggu'),
+        note: m['note'] as String? ?? '',
+        createdAt: _date(m['createdAt']) ?? DateTime.now(),
+        reviewedAt: _date(m['reviewedAt']),
+      );
+}
+
+/// Perumahan yang membuka pendaftaran mandiri.
+class RegistrationEstate {
+  const RegistrationEstate(
+      {required this.id, required this.name, this.address = ''});
+  final String id;
+  final String name;
+  final String address;
+}
+
+/// Pilihan rumah untuk calon warga (master data + ketersediaan rumah).
+class RegistrationOptions {
+  RegistrationOptions({
+    required this.clusters,
+    required this.types,
+    required this.blocks,
+    required this.houses,
+    required this.available,
+  });
+
+  final List<Cluster> clusters;
+  final List<HouseType> types;
+  final List<HouseBlock> blocks;
+  final List<House> houses;
+
+  /// ID rumah yang kosong dan tidak sedang diajukan pendaftar lain.
+  final Set<String> available;
+
+  List<Cluster> get sortedClusters =>
+      clusters.toList()..sort((a, b) => a.name.compareTo(b.name));
+
+  List<HouseType> typesOf(String clusterId) =>
+      types.where((t) => t.clusterId == clusterId).toList()
+        ..sort((a, b) => (a.buildingArea ?? 0).compareTo(b.buildingArea ?? 0));
+
+  List<HouseBlock> blocksOf(String clusterId, String typeId) => blocks
+      .where((b) => b.clusterId == clusterId && b.typeId == typeId)
+      .toList()
+    ..sort((a, b) => compareHouseNumber(a.name, b.name));
+
+  List<House> housesOf(String blockId) =>
+      houses.where((h) => h.blockId == blockId).toList()
+        ..sort((a, b) => compareHouseNumber(a.number, b.number));
+
+  int freeIn(Iterable<House> hs) => hs.where((h) => available.contains(h.id)).length;
+
+  String labelOf(House h) {
+    final b = blocks.where((b) => b.id == h.blockId).firstOrNull;
+    return '${b?.name ?? '?'}/${h.number}';
+  }
+
+  factory RegistrationOptions.fromMap(Map<String, dynamic> m) {
+    List<Map<String, dynamic>> list(String k) => [
+          for (final e in (m[k] as List<dynamic>? ?? const []))
+            (e as Map).cast<String, dynamic>(),
+        ];
+    return RegistrationOptions(
+      clusters: [for (final e in list('clusters')) Cluster.fromMap(e['id'] as String, e)],
+      types: [for (final e in list('types')) HouseType.fromMap(e['id'] as String, e)],
+      blocks: [for (final e in list('blocks')) HouseBlock.fromMap(e['id'] as String, e)],
+      houses: [for (final e in list('houses')) House.fromMap(e['id'] as String, e)],
+      available: {
+        for (final e in list('houses'))
+          if (e['available'] == true) e['id'] as String,
+      },
+    );
+  }
+}
