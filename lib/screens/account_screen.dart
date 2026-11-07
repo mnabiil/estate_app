@@ -1,0 +1,81 @@
+import 'package:flutter/material.dart';
+
+import '../store.dart';
+import 'announcements_screen.dart';
+import 'visitors_screen.dart';
+
+class AccountScreen extends StatelessWidget {
+  const AccountScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final user = store.currentUser!;
+    final resident = store.currentResident;
+    final theme = Theme.of(context);
+
+    void push(Widget page) =>
+        Navigator.of(context).push(MaterialPageRoute(builder: (_) => page));
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Akun')),
+      body: ListView(
+        children: [
+          const SizedBox(height: 24),
+          Center(
+            child: CircleAvatar(
+              radius: 40,
+              child: Text(user.name[0], style: theme.textTheme.headlineMedium),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Center(child: Text(user.name, style: theme.textTheme.titleLarge)),
+          Center(
+            child: Text(
+              store.isAdmin
+                  ? 'Pengelola · $estateName'
+                  : 'Warga · Rumah ${resident?.houseNo}',
+              style: theme.textTheme.bodyMedium,
+            ),
+          ),
+          const SizedBox(height: 24),
+          if (resident != null)
+            ListTile(
+              leading: const Icon(Icons.phone_outlined),
+              title: const Text('No. HP'),
+              subtitle: Text(resident.phone),
+            ),
+          ListTile(
+            leading: const Icon(Icons.campaign_outlined),
+            title: const Text('Pengumuman'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => push(const AnnouncementsScreen()),
+          ),
+          if (store.isAdmin)
+            ListTile(
+              leading: const Icon(Icons.badge_outlined),
+              title: const Text('Log tamu'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => push(const VisitorsScreen()),
+            ),
+          ListTile(
+            leading: const Icon(Icons.info_outline),
+            title: const Text('Tentang aplikasi'),
+            onTap: () => showAboutDialog(
+              context: context,
+              applicationName: 'Griya Kita',
+              applicationVersion: '0.1.0 (prototipe)',
+              applicationLegalese: 'Aplikasi manajemen perumahan.',
+            ),
+          ),
+          const Divider(),
+          ListTile(
+            leading: Icon(Icons.logout, color: theme.colorScheme.error),
+            title: Text('Keluar',
+                style: TextStyle(color: theme.colorScheme.error)),
+            onTap: () => store.logout(),
+          ),
+        ],
+      ),
+    );
+  }
+}

@@ -1,0 +1,254 @@
+import 'package:flutter/material.dart';
+
+import '../models.dart';
+import '../store.dart';
+import '../widgets.dart';
+
+class LoginScreen extends StatefulWidget {
+  const LoginScreen({super.key});
+
+  @override
+  State<LoginScreen> createState() => _LoginScreenState();
+}
+
+class _LoginScreenState extends State<LoginScreen> {
+  Role _role = Role.warga;
+  String _residentId = 'R1';
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+
+    return Scaffold(
+      body: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 420),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Icon(Icons.holiday_village, size: 72, color: scheme.primary),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Griya Kita',
+                    textAlign: TextAlign.center,
+                    style: theme.textTheme.headlineMedium
+                        ?.copyWith(fontWeight: FontWeight.bold),
+                  ),
+                  Text(
+                    'Manajemen $estateName',
+                    textAlign: TextAlign.center,
+                    style: theme.textTheme.bodyMedium
+                        ?.copyWith(color: scheme.onSurfaceVariant),
+                  ),
+                  const SizedBox(height: 32),
+                  if (store.isFirebase)
+                    const _EmailLoginForm()
+                  else
+                    ..._demoLogin(theme, scheme),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  List<Widget> _demoLogin(ThemeData theme, ColorScheme scheme) {
+    return [
+      SegmentedButton<Role>(
+        segments: const [
+          ButtonSegment(
+            value: Role.warga,
+            label: Text('Warga'),
+            icon: Icon(Icons.home_outlined),
+          ),
+          ButtonSegment(
+            value: Role.pengelola,
+            label: Text('Pengelola'),
+            icon: Icon(Icons.admin_panel_settings_outlined),
+          ),
+        ],
+        selected: {_role},
+        onSelectionChanged: (s) => setState(() => _role = s.first),
+      ),
+      const SizedBox(height: 16),
+      if (_role == Role.warga) ...[
+        Text('Masuk sebagai warga:', style: theme.textTheme.labelLarge),
+        const SizedBox(height: 8),
+        Card(
+          clipBehavior: Clip.antiAlias,
+          child: Column(
+            children: [
+              for (final r in store.residents.take(4))
+                ListTile(
+                  title: Text(r.name),
+                  subtitle: Text('Rumah ${r.houseNo}'),
+                  selected: r.id == _residentId,
+                  trailing: r.id == _residentId
+                      ? const Icon(Icons.check_circle)
+                      : null,
+                  onTap: () => setState(() => _residentId = r.id),
+                ),
+            ],
+          ),
+        ),
+      ] else
+        Card(
+          child: ListTile(
+            leading: const Icon(Icons.badge_outlined),
+            title: const Text('Pak Hendra'),
+            subtitle: Text('Pengelola $estateName'),
+          ),
+        ),
+      const SizedBox(height: 24),
+      FilledButton(
+        style: FilledButton.styleFrom(
+          padding: const EdgeInsets.symmetric(vertical: 16),
+        ),
+        onPressed: () => store.login(_role, residentId: _residentId),
+        child: const Text('Masuk'),
+      ),
+      const SizedBox(height: 12),
+      Text(
+        'Mode demo: tanpa password, data hanya tersimpan di memori.',
+        textAlign: TextAlign.center,
+        style:
+            theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+      ),
+    ];
+  }
+}
+
+class _EmailLoginForm extends StatefulWidget {
+  const _EmailLoginForm();
+
+  @override
+  State<_EmailLoginForm> createState() => _EmailLoginFormState();
+}
+
+class _EmailLoginFormState extends State<_EmailLoginForm> {
+  final _formKey = GlobalKey<FormState>();
+  final _email = TextEditingController();
+  final _password = TextEditingController();
+  bool _busy = false;
+  bool _obscure = true;
+  String? _error;
+
+  @override
+  void dispose() {
+    _email.dispose();
+    _password.dispose();
+    super.dispose();
+  }
+
+  Future<void> _signIn() async {
+    if (!_formKey.currentState!.validate()) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await store.signInWithEmail(_email.text.trim(), _password.text);
+      // Berhasil: main.dart otomatis pindah ke HomeShell.
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _error = describeError(e);
+        });
+      }
+    }
+  }
+
+  Future<void> _resetPassword() async {
+    final email = _email.text.trim();
+    if (!email.contains('@')) {
+      setState(
+          () => _error = 'Isi email Anda dulu, lalu ketuk "Lupa password".');
+      return;
+    }
+    await runAction(
+      context,
+      store.sendPasswordReset(email),
+      success: 'Link reset password dikirim ke $email',
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Form(
+      key: _formKey,
+      child: AutofillGroup(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            TextFormField(
+              controller: _email,
+              keyboardType: TextInputType.emailAddress,
+              autofillHints: const [AutofillHints.email],
+              decoration: const InputDecoration(
+                labelText: 'Email',
+                prefixIcon: Icon(Icons.email_outlined),
+                border: OutlineInputBorder(),
+              ),
+              validator: (v) =>
+                  (v == null || !v.contains('@')) ? 'Email tidak valid' : null,
+            ),
+            const SizedBox(height: 16),
+            TextFormField(
+              controller: _password,
+              obscureText: _obscure,
+              autofillHints: const [AutofillHints.password],
+              decoration: InputDecoration(
+                labelText: 'Password',
+                prefixIcon: const Icon(Icons.lock_outline),
+                border: const OutlineInputBorder(),
+                suffixIcon: IconButton(
+                  icon:
+                      Icon(_obscure ? Icons.visibility : Icons.visibility_off),
+                  onPressed: () => setState(() => _obscure = !_obscure),
+                ),
+              ),
+              validator: (v) => (v == null || v.isEmpty) ? 'Wajib diisi' : null,
+              onFieldSubmitted: (_) => _signIn(),
+            ),
+            if (_error != null) ...[
+              const SizedBox(height: 12),
+              Text(_error!, style: TextStyle(color: scheme.error)),
+            ],
+            const SizedBox(height: 24),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 16),
+              ),
+              onPressed: _busy ? null : _signIn,
+              child: _busy
+                  ? const SizedBox(
+                      height: 20,
+                      width: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Text('Masuk'),
+            ),
+            TextButton(
+              onPressed: _busy ? null : _resetPassword,
+              child: const Text('Lupa password'),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Akun warga dibuatkan oleh pengelola perumahan.',
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}

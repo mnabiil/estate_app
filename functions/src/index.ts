@@ -1,0 +1,177 @@
+/**
+ * Cloud Functions untuk Griya Kita.
+ *
+ *  - createResident      (callable)  pengelola menambah warga + membuat akun login
+ *  - payBill             (callable)  warga membayar tagihan (SIMULASI, lihat catatan)
+ *  - generateMonthlyBills (terjadwal) membuat tagihan IPL tiap tanggal 1, 01.00 WIB
+ *
+ * Butuh paket Firebase "Blaze" untuk deploy.
+ */
+import { initializeApp } from "firebase-admin/app";
+import { getAuth } from "firebase-admin/auth";
+import { FieldValue, getFirestore } from "firebase-admin/firestore";
+import { setGlobalOptions } from "firebase-functions/v2";
+import { HttpsError, onCall } from "firebase-functions/v2/https";
+import { onSchedule } from "firebase-functions/v2/scheduler";
+import { randomBytes } from "node:crypto";
+
+initializeApp();
+setGlobalOptions({ region: "asia-southeast2", maxInstances: 10 });
+
+const db = getFirestore();
+const DEFAULT_FEE = 250000;
+
+type Profile = {
+  estateId: string;
+  role: "warga" | "pengelola";
+  residentId?: string;
+  name: string;
+};
+
+async function profileOf(uid: string | undefined): Promise<Profile> {
+  if (!uid) throw new HttpsError("unauthenticated", "Silakan login terlebih dahulu.");
+  const snap = await db.doc(`users/${uid}`).get();
+  if (!snap.exists) throw new HttpsError("permission-denied", "Akun tidak terdaftar.");
+  return snap.data() as Profile;
+}
+
+function requireText(value: unknown, field: string, max = 200): string {
+  if (typeof value !== "string" || value.trim() === "" || value.length > max) {
+    throw new HttpsError("invalid-argument", `${field} wajib diisi (maks ${max} karakter).`);
+  }
+  return value.trim();
+}
+
+/** "2026-11" menurut waktu Jakarta. */
+function jakartaMonthKey(date: Date): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Jakarta",
+    year: "numeric",
+    month: "2-digit",
+  }).formatToParts(date);
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
+  return `${get("year")}-${get("month")}`;
+}
+
+// ---------------------------------------------------------------------------
+
+export const createResident = onCall(async (req) => {
+  const me = await profileOf(req.auth?.uid);
+  const data = req.data ?? {};
+  const estateId = requireText(data.estateId, "estateId");
+  if (me.role !== "pengelola" || me.estateId !== estateId) {
+    throw new HttpsError("permission-denied", "Hanya pengelola perumahan ini yang bisa menambah warga.");
+  }
+  const name = requireText(data.name, "Nama", 100);
+  const houseNo = requireText(data.houseNo, "No. rumah", 20);
+  const phone = requireText(data.phone, "No. HP", 20);
+  const email = requireText(data.email, "Email", 120).toLowerCase();
+
+  const tempPassword = randomBytes(9).toString("base64url");
+  let uid: string;
+  try {
+    const user = await getAuth().createUser({ email, password: tempPassword, displayName: name });
+    uid = user.uid;
+  } catch (e: unknown) {
+    const code = (e as { code?: string }).code;
+    if (code === "auth/email-already-exists") {
+      throw new HttpsError("already-exists", "Email ini sudah dipakai akun lain.");
+    }
+    if (code === "auth/invalid-email") {
+      throw new HttpsError("invalid-argument", "Format email tidak valid.");
+    }
+    throw e;
+  }
+
+  const residentRef = db.collection(`estates/${estateId}/residents`).doc();
+  const batch = db.batch();
+  batch.set(residentRef, {
+    name,
+    houseNo,
+    phone,
+    email,
+    uid,
+    createdAt: FieldValue.serverTimestamp(),
+  });
+  batch.set(db.doc(`users/${uid}`), {
+    estateId,
+    role: "warga",
+    residentId: residentRef.id,
+    name,
+  });
+  await batch.commit();
+
+  return { residentId: residentRef.id, tempPassword };
+});
+
+// ---------------------------------------------------------------------------
+
+/**
+ * SIMULASI pembayaran: langsung menandai lunas.
+ *
+ * Hanya aktif bila PAYMENT_SIMULATION=true (lihat functions/.env).
+ * Untuk produksi, ganti dengan: buat transaksi di Midtrans/Xendit -> kembalikan
+ * URL/VA ke aplikasi -> tandai lunas di webhook setelah verifikasi signature.
+ */
+export const payBill = onCall(async (req) => {
+  if (process.env.PAYMENT_SIMULATION !== "true") {
+    throw new HttpsError("failed-precondition", "Pembayaran online belum diaktifkan.");
+  }
+  const me = await profileOf(req.auth?.uid);
+  const data = req.data ?? {};
+  const estateId = requireText(data.estateId, "estateId");
+  const billId = requireText(data.billId, "billId");
+  const method = typeof data.method === "string" ? data.method.slice(0, 60) : "Simulasi";
+  if (me.estateId !== estateId) throw new HttpsError("permission-denied", "Akses ditolak.");
+
+  const ref = db.doc(`estates/${estateId}/bills/${billId}`);
+  await db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) throw new HttpsError("not-found", "Tagihan tidak ditemukan.");
+    const bill = snap.data()!;
+    if (me.role !== "pengelola" && bill.residentId !== me.residentId) {
+      throw new HttpsError("permission-denied", "Ini bukan tagihan Anda.");
+    }
+    if (bill.status === "lunas") {
+      throw new HttpsError("failed-precondition", "Tagihan ini sudah lunas.");
+    }
+    tx.update(ref, {
+      status: "lunas",
+      paidAt: FieldValue.serverTimestamp(),
+      method: `${method} (simulasi)`,
+    });
+  });
+  return { ok: true };
+});
+
+// ---------------------------------------------------------------------------
+
+export const generateMonthlyBills = onSchedule(
+  { schedule: "0 1 1 * *", timeZone: "Asia/Jakarta" },
+  async () => {
+    const period = jakartaMonthKey(new Date());
+    const estates = await db.collection("estates").get();
+
+    for (const estate of estates.docs) {
+      const fee = Number(estate.get("monthlyFee") ?? DEFAULT_FEE);
+      const residents = await estate.ref.collection("residents").get();
+      const writer = db.bulkWriter();
+      for (const r of residents.docs) {
+        // ID deterministik -> create() gagal bila tagihan bulan ini sudah ada (aman diulang).
+        writer
+          .create(estate.ref.collection("bills").doc(`${r.id}_${period}`), {
+            residentId: r.id,
+            period,
+            amount: fee,
+            status: "belumBayar",
+            paidAt: null,
+            method: null,
+            createdAt: FieldValue.serverTimestamp(),
+          })
+          .catch(() => undefined);
+      }
+      await writer.close();
+      console.log(`Tagihan ${period} untuk ${estate.id}: ${residents.size} warga diproses`);
+    }
+  },
+);

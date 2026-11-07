@@ -1,0 +1,106 @@
+rules_version = '2';
+
+// Aturan akses Griya Kita.
+// - Profil login ada di /users/{uid}: { estateId, role: 'warga'|'pengelola', residentId?, name }
+//   Profil HANYA dibuat lewat Cloud Function / Console, tidak bisa ditulis dari aplikasi.
+// - Warga hanya bisa membaca data miliknya sendiri. Pengelola bisa membaca semua
+//   data di perumahannya.
+// - Status "lunas" dari warga hanya bisa diubah oleh server (Cloud Function payBill).
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function me() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function inEstate(estateId) {
+      return signedIn() && me().estateId == estateId;
+    }
+
+    function isAdmin(estateId) {
+      return inEstate(estateId) && me().role == 'pengelola';
+    }
+
+    function ownsExisting(estateId) {
+      return inEstate(estateId) && resource.data.residentId == me().residentId;
+    }
+
+    function ownsNew(estateId) {
+      return inEstate(estateId)
+        && me().role == 'warga'
+        && request.resource.data.residentId == me().residentId;
+    }
+
+    function onlyChanges(keys) {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys);
+    }
+
+    match /users/{uid} {
+      allow read: if signedIn() && request.auth.uid == uid;
+      allow write: if false;
+    }
+
+    match /estates/{estateId} {
+      allow read: if inEstate(estateId);
+      allow write: if false;
+
+      match /residents/{residentId} {
+        allow read: if isAdmin(estateId)
+          || (inEstate(estateId) && me().residentId == residentId);
+        // Membuat warga baru (beserta akunnya) lewat Cloud Function createResident.
+        allow create, delete: if false;
+        allow update: if isAdmin(estateId) && onlyChanges(['name', 'houseNo', 'phone']);
+      }
+
+      match /bills/{billId} {
+        allow read: if isAdmin(estateId) || ownsExisting(estateId);
+        allow create: if isAdmin(estateId)
+          && request.resource.data.status == 'belumBayar'
+          && request.resource.data.amount is int
+          && request.resource.data.amount > 0;
+        // Pengelola menandai lunas (pembayaran tunai).
+        allow update: if isAdmin(estateId)
+          && onlyChanges(['status', 'paidAt', 'method'])
+          && request.resource.data.status == 'lunas';
+        allow delete: if isAdmin(estateId);
+      }
+
+      match /complaints/{complaintId} {
+        allow read: if isAdmin(estateId) || ownsExisting(estateId);
+        allow create: if ownsNew(estateId)
+          && request.resource.data.status == 'baru'
+          && request.resource.data.title is string
+          && request.resource.data.title.size() <= 120
+          && request.resource.data.description.size() <= 2000;
+        allow update: if isAdmin(estateId)
+          && onlyChanges(['status'])
+          && request.resource.data.status in ['baru', 'diproses', 'selesai'];
+        allow delete: if false;
+      }
+
+      match /visitors/{visitorId} {
+        allow read: if isAdmin(estateId) || ownsExisting(estateId);
+        allow create: if ownsNew(estateId)
+          && request.resource.data.checkedInAt == null
+          && request.resource.data.code is string;
+        // Satpam/pengelola melakukan check-in.
+        allow update: if isAdmin(estateId)
+          && onlyChanges(['checkedInAt'])
+          && request.resource.data.checkedInAt == request.time;
+        allow delete: if isAdmin(estateId) || ownsExisting(estateId);
+      }
+
+      match /announcements/{announcementId} {
+        allow read: if inEstate(estateId);
+        allow create: if isAdmin(estateId)
+          && request.resource.data.createdAt == request.time;
+        allow update, delete: if isAdmin(estateId);
+      }
+    }
+  }
+}

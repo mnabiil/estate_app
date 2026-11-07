@@ -1,0 +1,247 @@
+import 'package:flutter/material.dart';
+
+import '../models.dart';
+import '../store.dart';
+import '../utils.dart';
+import '../widgets.dart';
+
+class ComplaintsScreen extends StatefulWidget {
+  const ComplaintsScreen({super.key});
+
+  @override
+  State<ComplaintsScreen> createState() => _ComplaintsScreenState();
+}
+
+class _ComplaintsScreenState extends State<ComplaintsScreen> {
+  ComplaintStatus? _filter;
+
+  void _showDetail(Complaint c) {
+    final r = store.residentById(c.residentId);
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(c.title, style: Theme.of(ctx).textTheme.titleLarge),
+              const SizedBox(height: 4),
+              Text(
+                  '${c.category} · ${r?.name} (${r?.houseNo}) · ${formatDate(c.createdAt)}',
+                  style: Theme.of(ctx).textTheme.bodySmall),
+              const SizedBox(height: 16),
+              Text(c.description),
+              const SizedBox(height: 24),
+              if (store.isAdmin) ...[
+                Text('Ubah status', style: Theme.of(ctx).textTheme.labelLarge),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  children: [
+                    for (final s in ComplaintStatus.values)
+                      ChoiceChip(
+                        label: Text(s.label),
+                        selected: c.status == s,
+                        onSelected: (_) {
+                          Navigator.pop(ctx);
+                          runAction(
+                            context,
+                            store.updateComplaintStatus(c.id, s),
+                            success: 'Status keluhan: ${s.label}',
+                          );
+                        },
+                      ),
+                  ],
+                ),
+              ] else
+                Row(
+                  children: [
+                    const Text('Status: '),
+                    StatusChip(c.status.label, complaintColor(c.status)),
+                  ],
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: store,
+      builder: (context, _) {
+        final isAdmin = store.isAdmin;
+        var list = isAdmin
+            ? store.complaints.toList()
+            : store.complaints
+                .where((c) => c.residentId == store.currentUser!.residentId)
+                .toList();
+        if (_filter != null) {
+          list = list.where((c) => c.status == _filter).toList();
+        }
+        list.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+
+        return Scaffold(
+          appBar:
+              AppBar(title: Text(isAdmin ? 'Keluhan Warga' : 'Keluhan Saya')),
+          floatingActionButton: isAdmin
+              ? null
+              : FloatingActionButton.extended(
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                        builder: (_) => const ComplaintFormScreen()),
+                  ),
+                  icon: const Icon(Icons.add),
+                  label: const Text('Buat keluhan'),
+                ),
+          body: Column(
+            children: [
+              FilterBar<ComplaintStatus>(
+                options: {
+                  null: 'Semua',
+                  for (final s in ComplaintStatus.values) s: s.label,
+                },
+                selected: _filter,
+                onChanged: (v) => setState(() => _filter = v),
+              ),
+              Expanded(
+                child: list.isEmpty
+                    ? const EmptyState(
+                        icon: Icons.sentiment_satisfied_alt,
+                        message: 'Belum ada keluhan',
+                      )
+                    : ListView.builder(
+                        padding: const EdgeInsets.only(bottom: 88),
+                        itemCount: list.length,
+                        itemBuilder: (context, i) {
+                          final c = list[i];
+                          final r = store.residentById(c.residentId);
+                          return Card(
+                            margin: const EdgeInsets.symmetric(
+                                horizontal: 16, vertical: 6),
+                            child: ListTile(
+                              title: Text(c.title),
+                              subtitle: Text(
+                                isAdmin
+                                    ? '${r?.name} (${r?.houseNo}) · ${c.category}'
+                                    : '${c.category} · ${formatDate(c.createdAt)}',
+                              ),
+                              trailing: StatusChip(
+                                  c.status.label, complaintColor(c.status)),
+                              onTap: () => _showDetail(c),
+                            ),
+                          );
+                        },
+                      ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class ComplaintFormScreen extends StatefulWidget {
+  const ComplaintFormScreen({super.key});
+
+  @override
+  State<ComplaintFormScreen> createState() => _ComplaintFormScreenState();
+}
+
+class _ComplaintFormScreenState extends State<ComplaintFormScreen> {
+  final _formKey = GlobalKey<FormState>();
+  final _title = TextEditingController();
+  final _desc = TextEditingController();
+  String _category = complaintCategories.first;
+  bool _saving = false;
+
+  @override
+  void dispose() {
+    _title.dispose();
+    _desc.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    if (!_formKey.currentState!.validate()) return;
+    setState(() => _saving = true);
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await store.addComplaint(
+          _title.text.trim(), _desc.text.trim(), _category);
+      messenger.showSnackBar(
+          const SnackBar(content: Text('Keluhan terkirim ke pengelola')));
+      if (mounted) Navigator.pop(context);
+    } catch (e) {
+      messenger
+          .showSnackBar(SnackBar(content: Text('Gagal: ${describeError(e)}')));
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  String? _required(String? v) =>
+      (v == null || v.trim().isEmpty) ? 'Wajib diisi' : null;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Buat Keluhan')),
+      body: Form(
+        key: _formKey,
+        child: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            Text('Kategori', style: Theme.of(context).textTheme.labelLarge),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              children: [
+                for (final cat in complaintCategories)
+                  ChoiceChip(
+                    label: Text(cat),
+                    selected: _category == cat,
+                    onSelected: (_) => setState(() => _category = cat),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            TextFormField(
+              controller: _title,
+              decoration: const InputDecoration(
+                labelText: 'Judul',
+                hintText: 'Contoh: Lampu jalan mati',
+                border: OutlineInputBorder(),
+              ),
+              validator: _required,
+            ),
+            const SizedBox(height: 16),
+            TextFormField(
+              controller: _desc,
+              minLines: 4,
+              maxLines: 8,
+              decoration: const InputDecoration(
+                labelText: 'Deskripsi',
+                alignLabelWithHint: true,
+                border: OutlineInputBorder(),
+              ),
+              validator: _required,
+            ),
+            const SizedBox(height: 24),
+            FilledButton.icon(
+              onPressed: _saving ? null : _submit,
+              icon: const Icon(Icons.send),
+              label: const Text('Kirim'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
