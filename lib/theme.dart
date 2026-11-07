@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-/// Palet & gaya visual Griya Kita.
+/// Palet & gaya visual Nilaya Living.
 ///
 /// Terinspirasi UI kit "Rise Real Estate" (Figma Community): teks navy,
 /// warna utama teal gelap, aksen hijau lime, kartu abu muda bersudut besar,

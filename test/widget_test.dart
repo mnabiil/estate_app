@@ -13,7 +13,7 @@ void main() {
 
   testWidgets('warga bisa login dan membayar tagihan', (tester) async {
     await tester.pumpWidget(const EstateApp());
-    expect(find.text('Griya Kita'), findsOneWidget);
+    expect(find.text('Nilaya'), findsOneWidget);
 
     await tester.ensureVisible(find.text('Masuk'));
     await tester.tap(find.text('Masuk'));

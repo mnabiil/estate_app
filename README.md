@@ -1,4 +1,6 @@
-# Griya Kita — Aplikasi Manajemen Perumahan (Prototipe)
+# Nilaya Living — Aplikasi Manajemen Perumahan (Prototipe)
+
+<p align="center"><img src="assets/branding/logo_stacked.png" width="220" alt="Logo Nilaya Living"></p>
 
 Aplikasi Flutter untuk Android & iOS yang mengelola perumahan/cluster.
 Dua peran: **Warga** dan **Pengelola**. Data masih contoh (in-memory), belum ada backend.
@@ -19,6 +21,16 @@ Dua peran: **Warga** dan **Pengelola**. Data masih contoh (in-memory), belum ada
 Gaya visual terinspirasi UI kit *Rise Real Estate* (Figma Community): teks navy, warna utama
 teal, aksen hijau lime, kartu abu muda bersudut besar. Font **Lato** & **Raleway** dibundel di
 `assets/fonts/` (SIL Open Font License). Semua warna dan gaya komponen diatur di `lib/theme.dart`.
+
+## Logo & nama
+
+**Nilaya** (Sanskerta) berarti *kediaman, tempat bernaung*; **Living** menegaskan kehidupan
+sehari-hari warga. Logo: atap yang menaungi (rumah sebagai tempat berlindung) dan dua daun
+yang tumbuh berdampingan dari dalam rumah (kehidupan yang tumbuh, lingkungan hijau, dan warga
+yang hidup bertetangga). Warna: teal `#234F68`, lime `#8BC83F`, navy `#252B5C`.
+
+File di `assets/branding/`: `icon.svg` / `icon_1024.png` (ikon aplikasi), `logo_mark.svg`
+(simbol), `logo_horizontal*.png` & `logo_stacked.png` (logo lengkap).
 
 ## Menjalankan
 

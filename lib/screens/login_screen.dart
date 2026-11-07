@@ -38,21 +38,34 @@ class _LoginScreenState extends State<LoginScreen> {
                       padding: const EdgeInsets.fromLTRB(24, 40, 24, 32),
                       child: Column(
                         children: [
-                          const Icon(Icons.holiday_village_rounded,
-                              size: 76, color: AppColors.lime),
-                          const SizedBox(height: 8),
+                          Image.asset(
+                            'assets/images/logo_mark_light.png',
+                            width: 104,
+                            height: 104,
+                          ),
                           Text(
-                            'Griya Kita',
+                            'Nilaya',
                             textAlign: TextAlign.center,
-                            style: theme.textTheme.headlineLarge?.copyWith(
-                              fontFamily: fontBody,
-                              fontWeight: FontWeight.w900,
+                            style: theme.textTheme.displaySmall?.copyWith(
+                              fontWeight: FontWeight.w800,
                               color: Colors.white,
                             ),
                           ),
                           const SizedBox(height: 4),
+                          const Text(
+                            'LIVING',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontFamily: fontBody,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 15,
+                              letterSpacing: 8,
+                              color: AppColors.lime,
+                            ),
+                          ),
+                          const SizedBox(height: 12),
                           Text(
-                            'Manajemen $estateName',
+                            'Hunian nyaman, warga terhubung',
                             textAlign: TextAlign.center,
                             style: theme.textTheme.bodyMedium
                                 ?.copyWith(color: Colors.white70),

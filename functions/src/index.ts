@@ -1,5 +1,5 @@
 /**
- * Cloud Functions untuk Griya Kita.
+ * Cloud Functions untuk Nilaya Living.
  *
  *  - createResident      (callable)  pengelola menambah warga + membuat akun login
  *  - payBill             (callable)  warga membayar tagihan (SIMULASI, lihat catatan)

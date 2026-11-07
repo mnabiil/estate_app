@@ -66,7 +66,7 @@ class EstateStore extends ChangeNotifier {
     _fn = FirebaseFunctions.instanceFor(region: firebaseRegion);
     _storage = FirebaseStorage.instance;
     _clearData();
-    estateName = 'Griya Kita';
+    estateName = 'Perumahan';
 
     // Pulihkan sesi login sebelumnya.
     final user = _auth!.currentUser;

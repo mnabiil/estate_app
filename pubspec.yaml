@@ -1,5 +1,5 @@
 name: estate_app
-description: Griya Kita - aplikasi manajemen perumahan (prototipe) untuk Android & iOS.
+description: Nilaya Living - aplikasi manajemen perumahan (prototipe) untuk Android & iOS.
 publish_to: 'none'
 version: 0.1.0+1
 
@@ -24,6 +24,9 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+
+  assets:
+    - assets/images/
 
   # Font dari Google Fonts (SIL Open Font License, lihat assets/fonts/OFL-*.txt).
   fonts:

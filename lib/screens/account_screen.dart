@@ -62,9 +62,16 @@ class AccountScreen extends StatelessWidget {
             title: const Text('Tentang aplikasi'),
             onTap: () => showAboutDialog(
               context: context,
-              applicationName: 'Griya Kita',
+              applicationName: 'Nilaya Living',
               applicationVersion: '0.1.0 (prototipe)',
-              applicationLegalese: 'Aplikasi manajemen perumahan.',
+              applicationIcon: Image.asset(
+                'assets/images/app_icon.png',
+                width: 48,
+                height: 48,
+              ),
+              applicationLegalese:
+                  'Nilaya (Sanskerta): kediaman, tempat bernaung.\n'
+                  'Aplikasi manajemen perumahan.',
             ),
           ),
           const Divider(),

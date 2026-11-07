@@ -1,6 +1,6 @@
 rules_version = '2';
 
-// Aturan akses Griya Kita.
+// Aturan akses Nilaya Living.
 // - Profil login ada di /users/{uid}: { estateId, role: 'warga'|'pengelola', residentId?, name }
 //   Profil HANYA dibuat lewat Cloud Function / Console, tidak bisa ditulis dari aplikasi.
 // - Warga hanya bisa membaca data miliknya sendiri. Pengelola bisa membaca semua
