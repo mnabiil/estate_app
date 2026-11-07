@@ -15,10 +15,18 @@ class HousePickerField extends StatefulWidget {
     super.key,
     required this.houseId,
     required this.onChanged,
+    this.allowEstateChange = true,
+    this.exceptResidentId,
   });
 
   final String? houseId;
   final ValueChanged<String?> onChanged;
+
+  /// False untuk warga yang sudah ada: perumahan tidak bisa diganti.
+  final bool allowEstateChange;
+
+  /// Rumah yang ditempati warga ini tetap bisa dipilih (untuk pindah rumah).
+  final String? exceptResidentId;
 
   @override
   State<HousePickerField> createState() => _HousePickerFieldState();
@@ -131,8 +139,12 @@ class _HousePickerFieldState extends State<HousePickerField> {
         ),
       );
 
-  static int _free(Iterable<House> hs) =>
-      hs.where((h) => store.residentOfHouse(h.id) == null).length;
+  bool _isFree(House h) {
+    final r = store.residentOfHouse(h.id);
+    return r == null || r.id == widget.exceptResidentId;
+  }
+
+  int _free(Iterable<House> hs) => hs.where(_isFree).length;
 
   Future<void> _pickEstate() async {
     final id = await _pickFromList(
@@ -224,6 +236,7 @@ class _HousePickerFieldState extends State<HousePickerField> {
               for (final h in store.housesOf(blockId))
                 Builder(builder: (_) {
                   final r = store.residentOfHouse(h.id);
+                  final free = _isFree(h);
                   return Tooltip(
                     message: r == null ? 'Kosong' : 'Ditempati ${r.name}',
                     child: ChoiceChip(
@@ -234,7 +247,7 @@ class _HousePickerFieldState extends State<HousePickerField> {
                       label: Text(h.number),
                       selected: h.id == widget.houseId,
                       onSelected:
-                          r == null ? (_) => Navigator.pop(ctx, h.id) : null,
+                          free ? (_) => Navigator.pop(ctx, h.id) : null,
                     ),
                   );
                 }),
@@ -271,7 +284,7 @@ class _HousePickerFieldState extends State<HousePickerField> {
                 label: 'Perumahan',
                 value: store.estateName,
                 icon: Icons.location_city_outlined,
-                onTap: _pickEstate,
+                onTap: widget.allowEstateChange ? _pickEstate : null,
               ),
               const SizedBox(height: 10),
               if (store.houses.isEmpty)

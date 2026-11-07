@@ -313,6 +313,89 @@ class EstateStore extends ChangeNotifier {
     return res.data['tempPassword'] as String?;
   }
 
+  // ---------- Atur rumah warga (termasuk warga lama) ----------
+
+  /// Warga yang belum terhubung ke master rumah: data lama yang nomor
+  /// rumahnya diketik manual, atau rumahnya sudah dihapus dari master.
+  List<Resident> get unlinkedResidents => residents
+      .where((r) => r.houseId == null || houseById(r.houseId!) == null)
+      .toList();
+
+  static String _normLabel(String s) => s
+      .toLowerCase()
+      .replaceAll(RegExp(r'[\s.\-_]'), '')
+      // "a1/5" sama dengan "a1/05".
+      .replaceAll(RegExp(r'(?<=/)0+(?=\d)'), '');
+
+  /// Rumah di master yang labelnya sama dengan teks [label] (mis. "A1/05"),
+  /// tanpa membedakan huruf besar/kecil & spasi. Null bila tidak ada atau
+  /// labelnya ambigu (blok bernama sama di beberapa cluster).
+  House? houseMatchingLabel(String label) {
+    final want = _normLabel(label);
+    if (want.isEmpty) return null;
+    final found = houses.where((h) => _normLabel(houseLabel(h)) == want);
+    return found.length == 1 ? found.first : null;
+  }
+
+  /// Menghubungkan / memindahkan warga ke rumah [houseId].
+  Future<void> assignHouse(String residentId, String houseId) async {
+    final r = residentById(residentId);
+    if (r == null) throw StateError('Warga tidak ditemukan.');
+    final h = houseById(houseId);
+    if (h == null) throw StateError('Rumah tidak ditemukan.');
+    final occupant = residentOfHouse(houseId);
+    if (occupant != null && occupant.id != residentId) {
+      throw StateError(
+          'Rumah ${houseLabel(h)} sudah ditempati ${occupant.name}.');
+    }
+    final label = houseLabel(h);
+    if (!isFirebase) {
+      r
+        ..houseId = houseId
+        ..houseNo = label;
+      notifyListeners();
+      return;
+    }
+    await _est
+        .collection('residents')
+        .doc(residentId)
+        .update({'houseId': houseId, 'houseNo': label});
+  }
+
+  /// Menghubungkan otomatis warga lama yang teks nomor rumahnya cocok dengan
+  /// rumah kosong di master. Mengembalikan (terhubung, masih belum terhubung).
+  Future<(int, int)> autoLinkResidents() async {
+    final pending = unlinkedResidents;
+    final taken = <String>{};
+    final pairs = <(Resident, House)>[];
+    for (final r in pending) {
+      final h = houseMatchingLabel(r.houseNo);
+      if (h == null || taken.contains(h.id)) continue;
+      if (residentOfHouse(h.id) != null) continue;
+      taken.add(h.id);
+      pairs.add((r, h));
+    }
+    if (pairs.isEmpty) return (0, pending.length);
+    if (!isFirebase) {
+      for (final (r, h) in pairs) {
+        r
+          ..houseId = h.id
+          ..houseNo = houseLabel(h);
+      }
+      notifyListeners();
+    } else {
+      for (var i = 0; i < pairs.length; i += 400) {
+        final batch = _db!.batch();
+        for (final (r, h) in pairs.skip(i).take(400)) {
+          batch.update(_est.collection('residents').doc(r.id),
+              {'houseId': h.id, 'houseNo': houseLabel(h)});
+        }
+        await batch.commit();
+      }
+    }
+    return (pairs.length, pending.length - pairs.length);
+  }
+
   // ---------- Perumahan (bisa lebih dari satu untuk pengelola) ----------
 
   /// Perumahan yang bisa diakses akun ini. Warga: satu. Pengelola: bisa banyak.
@@ -869,6 +952,13 @@ class EstateStore extends ChangeNotifier {
       ('Joko Susilo', 'B2/04', '0838-6655-4433'),
       ('Rina Marlina', 'B2/10', '0857-7788-9900'),
     ];
+    // Warga lama: nomor rumah diketik manual, belum terhubung ke master.
+    // "A2/06" cocok dengan master (bisa dihubungkan otomatis); "Blok C 3"
+    // tidak cocok sehingga perlu diatur manual.
+    const legacy = [
+      ('Lina Hartati', 'A2/06', '0819-2468-1357'),
+      ('Bayu Saputra', 'Blok C 3', '0896-1357-2468'),
+    ];
     // Dua perumahan contoh. Perumahan pertama berisi data lengkap.
     _estateId = 'griya-asri';
     estates.addAll([
@@ -927,6 +1017,15 @@ class EstateStore extends ChangeNotifier {
         name: name,
         houseNo: house,
         houseId: houseIdFor(house),
+        phone: phone,
+      ));
+    }
+    for (var i = 0; i < legacy.length; i++) {
+      final (name, house, phone) = legacy[i];
+      residents.add(Resident(
+        id: 'R${data.length + i + 1}',
+        name: name,
+        houseNo: house,
         phone: phone,
       ));
     }

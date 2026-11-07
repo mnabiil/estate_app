@@ -86,7 +86,7 @@ void main() {
   test('banyak perumahan: berpindah, data terpisah, tambah baru', () async {
     expect(s.estates.map((e) => e.name),
         ['Perumahan Griya Asri', 'Nilaya Residence']);
-    expect(s.residents, hasLength(8));
+    expect(s.residents, hasLength(10));
 
     await s.switchEstate('nilaya-residence');
     expect(s.estateName, 'Nilaya Residence');
@@ -96,7 +96,7 @@ void main() {
     expect(s.houses, hasLength(8));
 
     await s.switchEstate('griya-asri');
-    expect(s.residents, hasLength(8));
+    expect(s.residents, hasLength(10));
     expect(s.clusters, hasLength(2));
 
     await s.createEstate(name: 'Nilaya Hills', address: 'Bogor', fee: 275000);
@@ -105,6 +105,41 @@ void main() {
     expect(s.clusters, isEmpty);
     expect(s.createEstate(name: 'nilaya hills', address: '', fee: 1),
         throwsStateError);
+  });
+
+  test('warga lama: hubungkan otomatis bila nomor rumah cocok', () async {
+    expect(s.unlinkedResidents.map((r) => r.name),
+        ['Lina Hartati', 'Bayu Saputra']);
+    final (linked, remaining) = await s.autoLinkResidents();
+    expect(linked, 1);
+    expect(remaining, 1);
+    final lina = s.residents.firstWhere((r) => r.name == 'Lina Hartati');
+    expect(s.houseLabel(s.houseById(lina.houseId!)!), 'A2/06');
+    expect(s.unlinkedResidents.single.name, 'Bayu Saputra');
+  });
+
+  test('label cocok tanpa peduli huruf, spasi, dan nol di depan', () {
+    expect(s.houseLabel(s.houseMatchingLabel('a1 / 5')!), 'A1/05');
+    expect(s.houseMatchingLabel('Blok C 3'), isNull);
+  });
+
+  test('atur & pindah rumah warga', () async {
+    final bayu = s.residents.firstWhere((r) => r.name == 'Bayu Saputra');
+    final b2 = block('B2');
+    final h11 = s.housesOf(b2.id).firstWhere((h) => h.number == '11');
+    await s.assignHouse(bayu.id, h11.id);
+    expect(bayu.houseNo, 'B2/11');
+    expect(s.residentOfHouse(h11.id), bayu);
+
+    // Rumah orang lain tidak bisa dipakai.
+    final budiHouse = s.residentById('R1')!.houseId!;
+    expect(s.assignHouse(bayu.id, budiHouse), throwsStateError);
+
+    // Pindah: rumah lama jadi kosong.
+    final h12 = s.housesOf(b2.id).firstWhere((h) => h.number == '12');
+    await s.assignHouse(bayu.id, h12.id);
+    expect(s.residentOfHouse(h11.id), isNull);
+    expect(bayu.houseNo, 'B2/12');
   });
 
   test('urutan nomor rumah alami', () {

@@ -124,7 +124,13 @@ service cloud.firestore {
           || (inEstate(estateId) && me().residentId == residentId);
         // Membuat warga baru (beserta akunnya) lewat Cloud Function createResident.
         allow create, delete: if false;
-        allow update: if isAdmin(estateId) && onlyChanges(['name', 'houseNo', 'phone']);
+        // Pengelola boleh mengubah data warga, termasuk mengatur / memindah
+        // rumah (houseId harus ada di master rumah perumahan ini).
+        allow update: if isAdmin(estateId)
+          && onlyChanges(['name', 'houseNo', 'phone', 'houseId'])
+          && request.resource.data.houseNo is string
+          && (request.resource.data.get('houseId', null) == null
+            || exists(/databases/$(database)/documents/estates/$(estateId)/houses/$(request.resource.data.houseId)));
       }
 
       match /bills/{billId} {
