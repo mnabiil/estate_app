@@ -17,7 +17,10 @@ void main() {
   tearDown(() => tmp.deleteSync(recursive: true));
 
   XFile file(String name, [int bytes = 1024]) {
-    final f = File('${tmp.path}/$name')..writeAsBytesSync(List.filled(bytes, 1));
+    // Pakai pemisah path bawaan OS: di Windows XFile.name diambil dari
+    // bagian setelah '\', jadi '/' akan ikut terbawa ke nama file.
+    final f = File('${tmp.path}${Platform.pathSeparator}$name')
+      ..writeAsBytesSync(List.filled(bytes, 1));
     return XFile(f.path, name: name);
   }
 
