@@ -5,6 +5,7 @@ import '../store.dart';
 import '../theme.dart';
 import '../utils.dart';
 import '../widgets.dart';
+import 'import_screen.dart';
 
 /// Master data (khusus pengelola), mengikuti alur:
 /// Perumahan > Cluster > Tipe rumah > Blok > No. rumah.
@@ -39,7 +40,17 @@ class MasterDataScreen extends StatelessWidget {
         final occupied = store.residents.where((r) => r.houseId != null).length;
 
         return Scaffold(
-          appBar: AppBar(title: const Text('Master Data')),
+          appBar: AppBar(
+            title: const Text('Master Data'),
+            actions: [
+              IconButton(
+                tooltip: 'Import dari Excel',
+                icon: const Icon(Icons.upload_file),
+                onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+                    builder: (_) => const ImportScreen())),
+              ),
+            ],
+          ),
           floatingActionButton: FloatingActionButton.extended(
             onPressed: () => _editCluster(context),
             icon: const Icon(Icons.add),
@@ -49,6 +60,18 @@ class MasterDataScreen extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 96),
             children: [
               const _StepHint(),
+              const SizedBox(height: 12),
+              Card(
+                child: ListTile(
+                  leading: const Icon(Icons.upload_file),
+                  title: const Text('Import dari Excel'),
+                  subtitle: const Text(
+                      'Isi cluster, tipe, blok, no. rumah & warga sekaligus'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                      builder: (_) => const ImportScreen())),
+                ),
+              ),
               const SizedBox(height: 16),
               _SectionHeader(
                 step: 1,

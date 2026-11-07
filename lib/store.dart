@@ -8,6 +8,7 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/foundation.dart';
 import 'package:image_picker/image_picker.dart';
 
+import 'import_plan.dart';
 import 'models.dart';
 import 'utils.dart';
 
@@ -735,6 +736,197 @@ class EstateStore extends ChangeNotifier {
       'at': FieldValue.serverTimestamp(),
       'recordedBy': by,
     });
+  }
+
+  // ---------- Import dari Excel ----------
+
+  /// Menjalankan rencana import (lihat lib/excel_io.dart) ke perumahan aktif.
+  /// Data yang sudah ada dipakai ulang berdasarkan nama. [onProgress]
+  /// menerima keterangan langkah yang sedang berjalan.
+  Future<ImportResult> applyImport(ImportPlan plan,
+      {void Function(String step)? onProgress}) async {
+    _requireAdmin();
+    if (plan.hasErrors) {
+      throw StateError('Perbaiki error di file terlebih dahulu.');
+    }
+    final result = ImportResult();
+
+    // Peta nama -> ID (data yang ada + yang akan dibuat).
+    final clusterIds = {for (final c in clusters) normName(c.name): c.id};
+    final typeIds = {
+      for (final t in houseTypes) '${t.clusterId}|${normName(t.name)}': t.id,
+    };
+    final blockIds = {
+      for (final b in blocks) '${b.clusterId}|${normName(b.name)}': b.id,
+    };
+    String newId(String col, String demoPrefix) => isFirebase
+        ? _est.collection(col).doc().id
+        : _newId(demoPrefix);
+
+    final newClusters = <Cluster>[];
+    for (final name in plan.clusters) {
+      final c = Cluster(id: newId('clusters', 'C'), name: name);
+      clusterIds[normName(name)] = c.id;
+      newClusters.add(c);
+    }
+    final newTypes = <HouseType>[];
+    for (final t in plan.types) {
+      final cid = clusterIds[normName(t.cluster)]!;
+      final type = HouseType(
+        id: newId('houseTypes', 'T'),
+        clusterId: cid,
+        name: t.name,
+        buildingArea: t.buildingArea,
+        landArea: t.landArea,
+      );
+      typeIds['$cid|${normName(t.name)}'] = type.id;
+      newTypes.add(type);
+    }
+    final newBlocks = <HouseBlock>[];
+    for (final b in plan.blocks) {
+      final cid = clusterIds[normName(b.cluster)]!;
+      final block = HouseBlock(
+        id: newId('blocks', 'K'),
+        clusterId: cid,
+        name: b.name,
+        typeId: typeIds['$cid|${normName(b.type)}'],
+      );
+      blockIds['$cid|${normName(b.name)}'] = block.id;
+      newBlocks.add(block);
+    }
+    final newHouses = <House>[];
+    for (final h in plan.houses) {
+      final cid = clusterIds[normName(h.cluster)]!;
+      newHouses.add(House(
+        id: newId('houses', 'H'),
+        clusterId: cid,
+        blockId: blockIds['$cid|${normName(h.block)}']!,
+        number: h.number,
+      ));
+    }
+
+    if (!isFirebase) {
+      clusters.addAll(newClusters);
+      houseTypes.addAll(newTypes);
+      blocks.addAll(newBlocks);
+      houses.addAll(newHouses);
+    } else {
+      // Bertahap: aturan keamanan blok memeriksa cluster & tipe yang sudah
+      // tersimpan, dan satu batch dibatasi jumlah pemeriksaan dokumennya.
+      onProgress?.call('Menyimpan cluster & tipe rumah…');
+      await _commitChunks([
+        for (final c in newClusters)
+          (WriteBatch b) =>
+              b.set(_est.collection('clusters').doc(c.id), {'name': c.name}),
+        for (final t in newTypes)
+          (WriteBatch b) => b.set(_est.collection('houseTypes').doc(t.id), {
+                'clusterId': t.clusterId,
+                'name': t.name,
+                'buildingArea': t.buildingArea,
+                'landArea': t.landArea,
+              }),
+      ], 400);
+      onProgress?.call('Menyimpan blok…');
+      await _commitChunks([
+        for (final k in newBlocks)
+          (WriteBatch b) => b.set(_est.collection('blocks').doc(k.id), {
+                'clusterId': k.clusterId,
+                'typeId': k.typeId,
+                'name': k.name,
+              }),
+      ], 5);
+      onProgress?.call('Menyimpan ${newHouses.length} nomor rumah…');
+      await _commitChunks([
+        for (final h in newHouses)
+          (WriteBatch b) => b.set(_est.collection('houses').doc(h.id), {
+                'clusterId': h.clusterId,
+                'blockId': h.blockId,
+                'number': h.number,
+              }),
+      ], 400);
+    }
+    result
+      ..clusters = newClusters.length
+      ..types = newTypes.length
+      ..blocks = newBlocks.length
+      ..houses = newHouses.length;
+
+    // Warga: rumah dicari dari data yang ada + yang baru dibuat.
+    final allHouses = [...houses, if (isFirebase) ...newHouses];
+    final blockNameById = {
+      for (final b in [...blocks, if (isFirebase) ...newBlocks]) b.id: b.name,
+    };
+    House? findHouse(PlanResident r) {
+      final cid = clusterIds[normName(r.cluster)];
+      final bid = blockIds['$cid|${normName(r.block)}'];
+      for (final h in allHouses) {
+        if (h.blockId == bid && normNumber(h.number) == normNumber(r.number)) {
+          return h;
+        }
+      }
+      return null;
+    }
+
+    for (var i = 0; i < plan.residents.length; i++) {
+      final r = plan.residents[i];
+      final h = findHouse(r);
+      final label = h == null ? '${r.block}/${r.number}' : '${blockNameById[h.blockId]}/${h.number}';
+      if (h == null) {
+        result.accounts.add(ResidentAccount(
+            name: r.name, house: label, email: r.email,
+            error: 'Rumah tidak ditemukan'));
+        continue;
+      }
+      if (!isFirebase) {
+        residents.add(Resident(
+          id: _newId('R'),
+          name: r.name,
+          houseNo: label,
+          houseId: h.id,
+          phone: r.phone,
+          email: r.email.isEmpty ? null : r.email,
+        ));
+        result.residents++;
+        result.accounts.add(
+            ResidentAccount(name: r.name, house: label, email: r.email));
+        continue;
+      }
+      onProgress?.call('Membuat akun warga ${i + 1}/${plan.residents.length}…');
+      try {
+        final res = await _fn!
+            .httpsCallable('createResident')
+            .call<Map<String, dynamic>>({
+          'estateId': _estateId,
+          'name': r.name,
+          'houseId': h.id,
+          'phone': r.phone,
+          'email': r.email,
+        });
+        result.residents++;
+        result.accounts.add(ResidentAccount(
+          name: r.name,
+          house: label,
+          email: r.email,
+          password: res.data['tempPassword'] as String?,
+        ));
+      } catch (e) {
+        result.accounts.add(ResidentAccount(
+            name: r.name, house: label, email: r.email, error: describeError(e)));
+      }
+    }
+    if (!isFirebase) notifyListeners();
+    return result;
+  }
+
+  Future<void> _commitChunks(
+      List<void Function(WriteBatch)> writes, int size) async {
+    for (var i = 0; i < writes.length; i += size) {
+      final batch = _db!.batch();
+      for (final w in writes.skip(i).take(size)) {
+        w(batch);
+      }
+      await batch.commit();
+    }
   }
 
   // ---------- Atur rumah warga (termasuk warga lama) ----------

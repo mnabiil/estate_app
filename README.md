@@ -16,7 +16,7 @@ Dua peran: **Warga** dan **Pengelola**. Data masih contoh (in-memory), belum ada
 | Pengumuman | Baca | Buat pengumuman |
 | Ijin renovasi | Ajukan (kecil/besar, detail, jangka waktu, lampiran file); setelah disetujui bayar deposit + bukti; catat barang masuk/keluar dengan foto | Tinjau & setujui/tolak, verifikasi deposit (atau terima tunai), perpanjang, tandai selesai, kembalikan deposit (bisa dipotong), catat barang dengan foto |
 | Data warga | — | Cari, tambah (pilih rumah dari daftar), lihat riwayat IPL |
-| Master data | — | Perumahan (bisa lebih dari satu) → Cluster → Tipe rumah (LB/LT) → Blok → No. rumah (tambah nomor sekaligus per rentang) |
+| Master data | — | Perumahan (bisa lebih dari satu) → Cluster → Tipe rumah (LB/LT) → Blok → No. rumah (tambah nomor sekaligus per rentang); **import/ekspor Excel** |
 
 ## Tampilan
 
@@ -33,6 +33,21 @@ yang hidup bertetangga). Warna: teal `#234F68`, lime `#8BC83F`, navy `#252B5C`.
 
 File di `assets/branding/`: `icon.svg` / `icon_1024.png` (ikon aplikasi), `logo_mark.svg`
 (simbol), `logo_horizontal*.png` & `logo_stacked.png` (logo lengkap).
+
+## Import dari Excel
+
+Master Data → **Import dari Excel** (pengelola):
+
+1. **Unduh template** (atau *Unduh data saat ini* untuk mengedit data yang ada).
+2. Isi sheet **Rumah** — `Cluster | Tipe | Luas Bangunan | Luas Tanah | Blok | No. Rumah`;
+   satu baris per blok, No. Rumah boleh rentang `01-20`, daftar `1, 2, 5`, atau `12A`.
+   Sheet **Warga** (opsional) — `Nama | Cluster | Blok | No. Rumah | No. HP | Email`.
+3. Unggah file `.xlsx` → **pratinjau** jumlah data baru, data yang sudah ada (dilewati),
+   serta error/peringatan per baris → **Import sekarang**.
+4. Mode Firebase: akun warga dibuat lewat `createResident`; daftar password sementara
+   bisa diunduh sebagai Excel.
+
+Data diimpor ke perumahan yang sedang aktif dan aman diunggah ulang (tidak digandakan).
 
 ## Menjalankan
 
