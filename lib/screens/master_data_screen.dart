@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models.dart';
 import '../store.dart';
+import '../theme.dart';
 import '../utils.dart';
 import '../widgets.dart';
 
@@ -98,6 +99,95 @@ class MasterDataScreen extends StatelessWidget {
         success: c == null ? 'Cluster $name ditambahkan' : 'Nama disimpan');
   }
 
+  Future<void> _editType(BuildContext context, [HouseType? t]) async {
+    final name = TextEditingController(text: t?.name);
+    final lb = TextEditingController(text: t?.buildingArea?.toString() ?? '');
+    final lt = TextEditingController(text: t?.landArea?.toString() ?? '');
+    final formKey = GlobalKey<FormState>();
+    String? area(String? v) {
+      if (v == null || v.trim().isEmpty) return null;
+      final n = int.tryParse(v.trim());
+      return (n == null || n <= 0 || n > 100000) ? 'Angka tidak valid' : null;
+    }
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(t == null ? 'Tambah tipe rumah' : 'Ubah tipe rumah'),
+        content: Form(
+          key: formKey,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextFormField(
+                  controller: name,
+                  autofocus: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Nama tipe',
+                    hintText: 'Contoh: Tipe 36/72',
+                  ),
+                  validator: (v) => _requiredMax(v, 40),
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextFormField(
+                        controller: lb,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(
+                          labelText: 'Luas bangunan',
+                          suffixText: 'm²',
+                        ),
+                        validator: area,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: TextFormField(
+                        controller: lt,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(
+                          labelText: 'Luas tanah',
+                          suffixText: 'm²',
+                        ),
+                        validator: area,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Batal')),
+          FilledButton(
+            onPressed: () {
+              if (formKey.currentState!.validate()) Navigator.pop(ctx, true);
+            },
+            child: const Text('Simpan'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !context.mounted) return;
+    final n = name.text.trim();
+    await runAction(
+      context,
+      store.saveHouseType(
+        n,
+        id: t?.id,
+        buildingArea: int.tryParse(lb.text.trim()),
+        landArea: int.tryParse(lt.text.trim()),
+      ),
+      success: t == null ? '$n ditambahkan' : 'Tipe disimpan',
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
@@ -105,6 +195,7 @@ class MasterDataScreen extends StatelessWidget {
       builder: (context, _) {
         final theme = Theme.of(context);
         final clusters = store.sortedClusters;
+        final types = store.sortedHouseTypes;
         final occupied = store.residents.where((r) => r.houseId != null).length;
 
         return Scaffold(
@@ -140,6 +231,45 @@ class MasterDataScreen extends StatelessWidget {
                       ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
                 ),
               ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Expanded(
+                    child:
+                        Text('Tipe rumah', style: theme.textTheme.titleMedium),
+                  ),
+                  TextButton.icon(
+                    onPressed: () => _editType(context),
+                    icon: const Icon(Icons.add),
+                    label: const Text('Tipe'),
+                  ),
+                ],
+              ),
+              if (types.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
+                  child: Text(
+                    'Belum ada tipe rumah (opsional), mis. Tipe 36/72.',
+                    style: theme.textTheme.bodySmall,
+                  ),
+                ),
+              for (final t in types)
+                _MasterTile(
+                  icon: Icons.straighten,
+                  title: t.name,
+                  subtitle: [
+                    if (t.areaText.isNotEmpty) t.areaText,
+                    '${store.houses.where((h) => h.typeId == t.id).length} rumah',
+                  ].join(' · '),
+                  onTap: () => _editType(context, t),
+                  editLabel: 'Ubah',
+                  onEdit: () => _editType(context, t),
+                  onDelete: () => _confirmDelete(
+                    context,
+                    'Hapus ${t.name}?',
+                    () => store.deleteHouseType(t.id),
+                  ),
+                ),
               const SizedBox(height: 16),
               Text('Cluster', style: theme.textTheme.titleMedium),
               const SizedBox(height: 4),
@@ -251,12 +381,15 @@ class BlockScreen extends StatelessWidget {
   final String blockId;
 
   Future<void> _addHouses(BuildContext context) async {
-    final numbers = await showDialog<List<String>>(
+    final result = await showDialog<(List<String>, String?)>(
       context: context,
       builder: (_) => const _AddHousesDialog(),
     );
-    if (numbers == null || numbers.isEmpty || !context.mounted) return;
-    final added = await runAction(context, store.addHouses(blockId, numbers));
+    if (result == null || !context.mounted) return;
+    final (numbers, typeId) = result;
+    if (numbers.isEmpty) return;
+    final added = await runAction(
+        context, store.addHouses(blockId, numbers, typeId: typeId));
     if (added == null || !context.mounted) return;
     final skipped = numbers.length - added;
     showSnack(
@@ -266,8 +399,22 @@ class BlockScreen extends StatelessWidget {
     );
   }
 
+  Future<void> _setTypeForBlock(BuildContext context) async {
+    final houses = store.housesOf(blockId);
+    if (houses.isEmpty) return;
+    final picked = await pickHouseType(context,
+        title: 'Tipe untuk semua rumah di blok ini');
+    if (picked == null || !context.mounted) return;
+    await runAction(
+      context,
+      store.setHouseType(houses.map((h) => h.id), picked.typeId),
+      success: 'Tipe ${houses.length} rumah diperbarui',
+    );
+  }
+
   void _showHouse(BuildContext context, House h) {
     final r = store.residentOfHouse(h.id);
+    final type = store.houseTypeById(h.typeId);
     showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
@@ -283,6 +430,27 @@ class BlockScreen extends StatelessWidget {
               const SizedBox(height: 4),
               Text(store.clusterById(h.clusterId)?.name ?? ''),
               const SizedBox(height: 16),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.straighten),
+                title: Text(type?.name ?? 'Tipe belum diatur'),
+                subtitle:
+                    type?.areaText.isNotEmpty == true ? Text(type!.areaText) : null,
+                trailing: TextButton(
+                  onPressed: () async {
+                    final picked = await pickHouseType(ctx,
+                        title: 'Tipe rumah ${store.houseLabel(h)}',
+                        selected: h.typeId);
+                    if (picked == null || !ctx.mounted) return;
+                    Navigator.pop(ctx);
+                    await runAction(
+                        context, store.setHouseType([h.id], picked.typeId),
+                        success: 'Tipe disimpan');
+                  },
+                  child: const Text('Ubah'),
+                ),
+              ),
+              const SizedBox(height: 8),
               Text(r == null
                   ? 'Belum berpenghuni.'
                   : 'Ditempati ${r.name} · ${r.phone}'),
@@ -323,7 +491,17 @@ class BlockScreen extends StatelessWidget {
         final scheme = Theme.of(context).colorScheme;
         final houses = store.housesOf(blockId);
         return Scaffold(
-          appBar: AppBar(title: Text('Blok ${block.name}')),
+          appBar: AppBar(
+            title: Text('Blok ${block.name}'),
+            actions: [
+              if (houses.isNotEmpty && store.houseTypes.isNotEmpty)
+                IconButton(
+                  tooltip: 'Atur tipe semua rumah',
+                  icon: const Icon(Icons.straighten),
+                  onPressed: () => _setTypeForBlock(context),
+                ),
+            ],
+          ),
           floatingActionButton: FloatingActionButton.extended(
             onPressed: () => _addHouses(context),
             icon: const Icon(Icons.add),
@@ -341,7 +519,7 @@ class BlockScreen extends StatelessWidget {
                     maxCrossAxisExtent: 110,
                     mainAxisSpacing: 10,
                     crossAxisSpacing: 10,
-                    childAspectRatio: 0.95,
+                    childAspectRatio: 0.8,
                   ),
                   itemCount: houses.length,
                   itemBuilder: (context, i) {
@@ -378,6 +556,21 @@ class BlockScreen extends StatelessWidget {
                                       : scheme.onSurface,
                                 ),
                               ),
+                              if (store.houseTypeById(h.typeId) case final t?)
+                                Text(
+                                  t.name.replaceFirst(
+                                      RegExp(r'^tipe\s*', caseSensitive: false),
+                                      ''),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w700,
+                                    color: filled
+                                        ? AppColors.lime
+                                        : scheme.primary,
+                                  ),
+                                ),
                               Text(
                                 r?.name.split(' ').first ?? 'Kosong',
                                 maxLines: 1,
@@ -417,6 +610,7 @@ class _AddHousesDialogState extends State<_AddHousesDialog> {
   final _manual = TextEditingController();
   bool _range = true;
   bool _pad = true;
+  String? _typeId;
 
   @override
   void dispose() {
@@ -519,6 +713,29 @@ class _AddHousesDialogState extends State<_AddHousesDialog> {
                     return null;
                   },
                 ),
+              if (store.houseTypes.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                Text('Tipe rumah',
+                    style: Theme.of(context).textTheme.labelLarge),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    ChoiceChip(
+                      label: const Text('Tanpa tipe'),
+                      selected: _typeId == null,
+                      onSelected: (_) => setState(() => _typeId = null),
+                    ),
+                    for (final t in store.sortedHouseTypes)
+                      ChoiceChip(
+                        label: Text(t.name),
+                        selected: _typeId == t.id,
+                        onSelected: (_) => setState(() => _typeId = t.id),
+                      ),
+                  ],
+                ),
+              ],
             ],
           ),
         ),
@@ -530,7 +747,7 @@ class _AddHousesDialogState extends State<_AddHousesDialog> {
         FilledButton(
           onPressed: () {
             if (_formKey.currentState!.validate()) {
-              Navigator.pop(context, _numbers());
+              Navigator.pop(context, (_numbers(), _typeId));
             }
           },
           child: const Text('Tambah'),
@@ -548,8 +765,10 @@ class _MasterTile extends StatelessWidget {
     required this.onTap,
     required this.onEdit,
     required this.onDelete,
+    this.editLabel = 'Ubah nama',
   });
 
+  final String editLabel;
   final IconData icon;
   final String title;
   final String subtitle;
@@ -567,9 +786,9 @@ class _MasterTile extends StatelessWidget {
         onTap: onTap,
         trailing: PopupMenuButton<String>(
           onSelected: (v) => v == 'edit' ? onEdit() : onDelete(),
-          itemBuilder: (_) => const [
-            PopupMenuItem(value: 'edit', child: Text('Ubah nama')),
-            PopupMenuItem(value: 'delete', child: Text('Hapus')),
+          itemBuilder: (_) => [
+            PopupMenuItem(value: 'edit', child: Text(editLabel)),
+            const PopupMenuItem(value: 'delete', child: Text('Hapus')),
           ],
         ),
       ),
@@ -664,4 +883,49 @@ Future<String?> promptText(
     },
   );
   return result;
+}
+
+/// Hasil pilihan tipe: [typeId] null berarti "tanpa tipe".
+typedef HouseTypeChoice = ({String? typeId});
+
+/// Bottom sheet memilih tipe rumah. Mengembalikan null bila dibatalkan.
+Future<HouseTypeChoice?> pickHouseType(
+  BuildContext context, {
+  required String title,
+  String? selected,
+}) {
+  return showModalBottomSheet<HouseTypeChoice>(
+    context: context,
+    showDragHandle: true,
+    isScrollControlled: true,
+    builder: (ctx) => SafeArea(
+      child: ConstrainedBox(
+        constraints:
+            BoxConstraints(maxHeight: MediaQuery.sizeOf(ctx).height * 0.7),
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
+              child: Text(title, style: Theme.of(ctx).textTheme.titleLarge),
+            ),
+            ListTile(
+              leading: const Icon(Icons.block),
+              title: const Text('Tanpa tipe'),
+              selected: selected == null,
+              onTap: () => Navigator.pop(ctx, (typeId: null)),
+            ),
+            for (final t in store.sortedHouseTypes)
+              ListTile(
+                leading: const Icon(Icons.straighten),
+                title: Text(t.name),
+                subtitle: t.areaText.isEmpty ? null : Text(t.areaText),
+                selected: selected == t.id,
+                onTap: () => Navigator.pop(ctx, (typeId: t.id)),
+              ),
+          ],
+        ),
+      ),
+    ),
+  );
 }

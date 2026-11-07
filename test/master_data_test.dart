@@ -51,6 +51,30 @@ void main() {
     expect(s.saveBlock(c.id, 'c1'), throwsStateError);
   });
 
+  test('tipe rumah: data contoh, tambah rumah bertipe, ubah tipe', () async {
+    expect(s.houseTypes, hasLength(2));
+    final budiHouse = s.houseById(s.residentById('R1')!.houseId!)!;
+    expect(s.houseTypeById(budiHouse.typeId)!.name, 'Tipe 36/72');
+
+    await s.saveHouseType('Tipe 60/120', buildingArea: 60, landArea: 120);
+    final t60 = s.houseTypes.firstWhere((t) => t.name == 'Tipe 60/120');
+    expect(t60.areaText, 'LB 60 m² · LT 120 m²');
+    expect(s.sortedHouseTypes.last.id, t60.id);
+    expect(s.saveHouseType('tipe 60/120'), throwsStateError);
+
+    final a1 = s.blocks.firstWhere((b) => b.name == 'A1');
+    await s.addHouses(a1.id, ['20'], typeId: t60.id);
+    final h20 = s.housesOf(a1.id).firstWhere((h) => h.number == '20');
+    expect(h20.typeId, t60.id);
+
+    // Tipe yang masih dipakai tidak bisa dihapus.
+    expect(s.deleteHouseType(t60.id), throwsStateError);
+    await s.setHouseType([h20.id], null);
+    expect(h20.typeId, isNull);
+    await s.deleteHouseType(t60.id);
+    expect(s.houseTypeById(t60.id), isNull);
+  });
+
   test('urutan nomor rumah alami', () {
     final list = ['10', '2', '10A', '1', 'B'];
     list.sort(compareHouseNumber);

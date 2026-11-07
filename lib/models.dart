@@ -89,12 +89,41 @@ class HouseBlock {
       );
 }
 
+/// Tipe rumah, mis. "Tipe 36/72" (luas bangunan 36 m², tanah 72 m²).
+class HouseType {
+  HouseType({
+    required this.id,
+    required this.name,
+    this.buildingArea,
+    this.landArea,
+  });
+
+  final String id;
+  String name;
+  int? buildingArea;
+  int? landArea;
+
+  /// Mis. "LB 36 m² · LT 72 m²", kosong bila luas tidak diisi.
+  String get areaText => [
+        if (buildingArea != null) 'LB $buildingArea m²',
+        if (landArea != null) 'LT $landArea m²',
+      ].join(' · ');
+
+  factory HouseType.fromMap(String id, Map<String, dynamic> m) => HouseType(
+        id: id,
+        name: m['name'] as String? ?? '',
+        buildingArea: (m['buildingArea'] as num?)?.toInt(),
+        landArea: (m['landArea'] as num?)?.toInt(),
+      );
+}
+
 class House {
   House({
     required this.id,
     required this.clusterId,
     required this.blockId,
     required this.number,
+    this.typeId,
   });
 
   final String id;
@@ -104,11 +133,15 @@ class House {
   /// Nomor rumah sebagai teks, mis. "05" atau "12A".
   final String number;
 
+  /// ID tipe rumah (opsional).
+  String? typeId;
+
   factory House.fromMap(String id, Map<String, dynamic> m) => House(
         id: id,
         clusterId: m['clusterId'] as String? ?? '',
         blockId: m['blockId'] as String? ?? '',
         number: m['number'] as String? ?? '',
+        typeId: m['typeId'] as String?,
       );
 }
 

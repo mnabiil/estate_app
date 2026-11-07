@@ -42,6 +42,7 @@ class EstateStore extends ChangeNotifier {
   final List<Cluster> clusters = [];
   final List<HouseBlock> blocks = [];
   final List<House> houses = [];
+  final List<HouseType> houseTypes = [];
 
   String estateName = 'Perumahan Griya Asri';
   String estateAddress = 'Jl. Raya Griya Asri No. 1, Bekasi';
@@ -134,6 +135,7 @@ class EstateStore extends ChangeNotifier {
     _bind(_est.collection('clusters'), clusters, Cluster.fromMap);
     _bind(_est.collection('blocks'), blocks, HouseBlock.fromMap);
     _bind(_est.collection('houses'), houses, House.fromMap);
+    _bind(_est.collection('houseTypes'), houseTypes, HouseType.fromMap);
     _bind(scoped('bills'), bills, Bill.fromMap);
     _bind(scoped('complaints'), complaints, Complaint.fromMap);
     _bind(scoped('visitors'), visitors, Visitor.fromMap);
@@ -174,6 +176,7 @@ class EstateStore extends ChangeNotifier {
     clusters.clear();
     blocks.clear();
     houses.clear();
+    houseTypes.clear();
     bills.clear();
     complaints.clear();
     visitors.clear();
@@ -290,6 +293,82 @@ class EstateStore extends ChangeNotifier {
     return null;
   }
 
+  HouseType? houseTypeById(String? id) {
+    if (id == null) return null;
+    for (final t in houseTypes) {
+      if (t.id == id) return t;
+    }
+    return null;
+  }
+
+  List<HouseType> get sortedHouseTypes =>
+      houseTypes.toList()
+        ..sort((a, b) {
+          final byArea = (a.buildingArea ?? 1 << 30)
+              .compareTo(b.buildingArea ?? 1 << 30);
+          return byArea != 0 ? byArea : a.name.compareTo(b.name);
+        });
+
+  Future<void> saveHouseType(String name,
+      {String? id, int? buildingArea, int? landArea}) async {
+    _checkName(name, houseTypes.where((t) => t.id != id).map((t) => t.name),
+        'Tipe');
+    if (!isFirebase) {
+      if (id == null) {
+        houseTypes.add(HouseType(
+            id: _newId('T'),
+            name: name,
+            buildingArea: buildingArea,
+            landArea: landArea));
+      } else {
+        houseTypeById(id)!
+          ..name = name
+          ..buildingArea = buildingArea
+          ..landArea = landArea;
+      }
+      notifyListeners();
+      return;
+    }
+    final col = _est.collection('houseTypes');
+    await (id == null ? col.doc() : col.doc(id)).set({
+      'name': name,
+      'buildingArea': buildingArea,
+      'landArea': landArea,
+    });
+  }
+
+  Future<void> deleteHouseType(String id) async {
+    final used = houses.where((h) => h.typeId == id).length;
+    if (used > 0) {
+      throw StateError('Tipe ini masih dipakai $used rumah.');
+    }
+    if (!isFirebase) {
+      houseTypes.removeWhere((t) => t.id == id);
+      notifyListeners();
+      return;
+    }
+    await _est.collection('houseTypes').doc(id).delete();
+  }
+
+  /// Mengatur tipe untuk beberapa rumah sekaligus (null = tanpa tipe).
+  Future<void> setHouseType(Iterable<String> houseIds, String? typeId) async {
+    final ids = houseIds.toList();
+    if (!isFirebase) {
+      for (final id in ids) {
+        houseById(id)?.typeId = typeId;
+      }
+      notifyListeners();
+      return;
+    }
+    for (var i = 0; i < ids.length; i += 400) {
+      final batch = _db!.batch();
+      for (final id in ids.skip(i).take(400)) {
+        batch.update(_est.collection('houses').doc(id), {'typeId': typeId});
+      }
+      await batch.commit();
+    }
+  }
+
   List<Cluster> get sortedClusters =>
       clusters.toList()..sort((a, b) => a.name.compareTo(b.name));
 
@@ -394,7 +473,8 @@ class EstateStore extends ChangeNotifier {
 
   /// Menambah nomor rumah ke blok. Nomor yang sudah ada dilewati.
   /// Mengembalikan jumlah nomor yang benar-benar ditambahkan.
-  Future<int> addHouses(String blockId, List<String> numbers) async {
+  Future<int> addHouses(String blockId, List<String> numbers,
+      {String? typeId}) async {
     final block = blockById(blockId)!;
     final existing = housesOf(blockId).map((h) => h.number.toLowerCase()).toSet();
     final fresh = <String>[];
@@ -411,7 +491,8 @@ class EstateStore extends ChangeNotifier {
             id: _newId('H'),
             clusterId: block.clusterId,
             blockId: blockId,
-            number: n));
+            number: n,
+            typeId: typeId));
       }
       notifyListeners();
       return fresh.length;
@@ -422,6 +503,7 @@ class EstateStore extends ChangeNotifier {
         'clusterId': block.clusterId,
         'blockId': blockId,
         'number': n,
+        'typeId': typeId,
       });
     }
     await batch.commit();
@@ -638,7 +720,13 @@ class EstateStore extends ChangeNotifier {
       ('Joko Susilo', 'B2/04', '0838-6655-4433'),
       ('Rina Marlina', 'B2/10', '0857-7788-9900'),
     ];
-    // Master: 2 cluster, masing-masing 2 blok, tiap blok rumah no. 01-12.
+    // Master: 2 tipe rumah; 2 cluster, masing-masing 2 blok, tiap blok
+    // rumah no. 01-12. Cluster Anggrek tipe 36/72, Bougenville tipe 45/90.
+    final t36 = HouseType(
+        id: _newId('T'), name: 'Tipe 36/72', buildingArea: 36, landArea: 72);
+    final t45 = HouseType(
+        id: _newId('T'), name: 'Tipe 45/90', buildingArea: 45, landArea: 90);
+    houseTypes.addAll([t36, t45]);
     const master = {
       'Cluster Anggrek': ['A1', 'A2'],
       'Cluster Bougenville': ['B1', 'B2'],
@@ -656,6 +744,7 @@ class EstateStore extends ChangeNotifier {
             clusterId: c.id,
             blockId: b.id,
             number: n.toString().padLeft(2, '0'),
+            typeId: clusterName.contains('Anggrek') ? t36.id : t45.id,
           ));
         }
       }

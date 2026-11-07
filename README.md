@@ -15,7 +15,7 @@ Dua peran: **Warga** dan **Pengelola**. Data masih contoh (in-memory), belum ada
 | Tamu | Daftarkan tamu → dapat kode akses 6 digit | Log tamu, check-in |
 | Pengumuman | Baca | Buat pengumuman |
 | Data warga | — | Cari, tambah (pilih rumah dari daftar), lihat riwayat IPL |
-| Master data | — | Profil perumahan, Cluster → Blok → No. rumah (tambah nomor sekaligus per rentang) |
+| Master data | — | Profil perumahan, tipe rumah (LB/LT), Cluster → Blok → No. rumah (tambah nomor sekaligus per rentang) |
 
 ## Tampilan
 
@@ -96,7 +96,8 @@ users/{uid}                      { estateId, role, residentId?, name }
 estates/{estateId}               { name, address, monthlyFee }
   clusters/{id}                  { name }
   blocks/{id}                    { clusterId, name }
-  houses/{id}                    { clusterId, blockId, number }
+  houseTypes/{id}                { name, buildingArea, landArea }
+  houses/{id}                    { clusterId, blockId, number, typeId }
   residents/{residentId}         { name, houseId, houseNo, phone, email, uid }
   bills/{residentId_YYYY-MM}     { residentId, period, amount, status, paidAt, method }
   complaints/{id}                { residentId, title, description, category, status, photoUrls, createdAt }

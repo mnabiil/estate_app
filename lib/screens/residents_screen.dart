@@ -157,6 +157,8 @@ class _ResidentsScreenState extends State<ResidentsScreen> {
                   store
                       .clusterById(store.houseById(r.houseId!)?.clusterId ?? '')
                       ?.name,
+                if (r.houseId != null)
+                  store.houseTypeById(store.houseById(r.houseId!)?.typeId)?.name,
                 r.phone,
               ].whereType<String>().join(' · ')),
             ),

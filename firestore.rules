@@ -84,10 +84,24 @@ service cloud.firestore {
         allow delete: if isAdmin(estateId);
       }
 
+      match /houseTypes/{typeId} {
+        allow read: if inEstate(estateId);
+        allow create, update: if isAdmin(estateId)
+          && request.resource.data.keys().hasOnly(['name', 'buildingArea', 'landArea'])
+          && validName(40)
+          && (request.resource.data.get('buildingArea', null) == null
+            || request.resource.data.buildingArea is int)
+          && (request.resource.data.get('landArea', null) == null
+            || request.resource.data.landArea is int);
+        allow delete: if isAdmin(estateId);
+      }
+
       match /houses/{houseId} {
         allow read: if inEstate(estateId);
         allow create, update: if isAdmin(estateId)
-          && request.resource.data.keys().hasOnly(['clusterId', 'blockId', 'number'])
+          && request.resource.data.keys().hasOnly(['clusterId', 'blockId', 'number', 'typeId'])
+          && (request.resource.data.get('typeId', null) == null
+            || request.resource.data.typeId is string)
           && request.resource.data.blockId is string
           && request.resource.data.clusterId is string
           && request.resource.data.number is string

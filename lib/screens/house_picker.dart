@@ -122,8 +122,12 @@ class _HousePickerFieldState extends State<HousePickerField> {
               for (final h in store.housesOf(_blockId!))
                 Builder(builder: (_) {
                   final r = store.residentOfHouse(h.id);
+                  final type = store.houseTypeById(h.typeId);
                   return Tooltip(
-                    message: r == null ? 'Kosong' : 'Ditempati ${r.name}',
+                    message: [
+                      r == null ? 'Kosong' : 'Ditempati ${r.name}',
+                      if (type != null) type.name,
+                    ].join(' · '),
                     child: ChoiceChip(
                       avatar: r == null
                           ? null
@@ -198,6 +202,24 @@ class _HousePickerFieldState extends State<HousePickerField> {
               ),
             ],
           ),
+          if (store.houseTypeById(house?.typeId) case final t?)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(4, 8, 4, 0),
+              child: Row(
+                children: [
+                  Icon(Icons.straighten,
+                      size: 16, color: Theme.of(context).colorScheme.primary),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      [t.name, if (t.areaText.isNotEmpty) t.areaText]
+                          .join(' · '),
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ),
+                ],
+              ),
+            ),
         ],
       ),
     );
