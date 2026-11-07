@@ -1,7 +1,10 @@
 rules_version = '2';
 
 // Aturan akses Nilaya Living.
-// - Profil login ada di /users/{uid}: { estateId, role: 'warga'|'pengelola', residentId?, name }
+// - Profil login ada di /users/{uid}:
+//     { estateId, estateIds?, role: 'warga'|'pengelola', residentId?, name }
+//   Pengelola bisa mengelola beberapa perumahan lewat estateIds (estateId =
+//   perumahan utama). Warga hanya terikat ke satu estateId.
 //   Profil HANYA dibuat lewat Cloud Function / Console, tidak bisa ditulis dari aplikasi.
 // - Warga hanya bisa membaca data miliknya sendiri. Pengelola bisa membaca semua
 //   data di perumahannya.
@@ -19,7 +22,9 @@ service cloud.firestore {
     }
 
     function inEstate(estateId) {
-      return signedIn() && me().estateId == estateId;
+      return signedIn()
+        && (me().estateId == estateId
+          || (me().role == 'pengelola' && estateId in me().get('estateIds', [])));
     }
 
     function isAdmin(estateId) {
@@ -77,17 +82,23 @@ service cloud.firestore {
       match /blocks/{blockId} {
         allow read: if inEstate(estateId);
         allow create, update: if isAdmin(estateId)
-          && request.resource.data.keys().hasOnly(['clusterId', 'name'])
+          && request.resource.data.keys().hasOnly(['clusterId', 'typeId', 'name'])
           && request.resource.data.clusterId is string
           && exists(/databases/$(database)/documents/estates/$(estateId)/clusters/$(request.resource.data.clusterId))
+          // Setiap blok berisi satu tipe dari cluster yang sama.
+          && request.resource.data.typeId is string
+          && get(/databases/$(database)/documents/estates/$(estateId)/houseTypes/$(request.resource.data.typeId)).data.clusterId
+            == request.resource.data.clusterId
           && validName(20);
         allow delete: if isAdmin(estateId);
       }
 
+      // Tipe rumah milik satu cluster.
       match /houseTypes/{typeId} {
         allow read: if inEstate(estateId);
         allow create, update: if isAdmin(estateId)
-          && request.resource.data.keys().hasOnly(['name', 'buildingArea', 'landArea'])
+          && request.resource.data.keys().hasOnly(['clusterId', 'name', 'buildingArea', 'landArea'])
+          && request.resource.data.clusterId is string
           && validName(40)
           && (request.resource.data.get('buildingArea', null) == null
             || request.resource.data.buildingArea is int)
@@ -99,9 +110,7 @@ service cloud.firestore {
       match /houses/{houseId} {
         allow read: if inEstate(estateId);
         allow create, update: if isAdmin(estateId)
-          && request.resource.data.keys().hasOnly(['clusterId', 'blockId', 'number', 'typeId'])
-          && (request.resource.data.get('typeId', null) == null
-            || request.resource.data.typeId is string)
+          && request.resource.data.keys().hasOnly(['clusterId', 'blockId', 'number'])
           && request.resource.data.blockId is string
           && request.resource.data.clusterId is string
           && request.resource.data.number is string

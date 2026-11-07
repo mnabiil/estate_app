@@ -54,8 +54,9 @@ class AccountScreen extends StatelessWidget {
           if (store.isAdmin)
             ListTile(
               leading: const Icon(Icons.location_city_outlined),
-              title: const Text('Master data perumahan'),
-              subtitle: const Text('Cluster, blok, dan nomor rumah'),
+              title: const Text('Master data'),
+              subtitle: const Text(
+                  'Perumahan, cluster, tipe rumah, blok, no. rumah'),
               trailing: const Icon(Icons.chevron_right),
               onTap: () => push(const MasterDataScreen()),
             ),

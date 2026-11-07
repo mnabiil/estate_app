@@ -15,7 +15,7 @@ Dua peran: **Warga** dan **Pengelola**. Data masih contoh (in-memory), belum ada
 | Tamu | Daftarkan tamu → dapat kode akses 6 digit | Log tamu, check-in |
 | Pengumuman | Baca | Buat pengumuman |
 | Data warga | — | Cari, tambah (pilih rumah dari daftar), lihat riwayat IPL |
-| Master data | — | Profil perumahan, tipe rumah (LB/LT), Cluster → Blok → No. rumah (tambah nomor sekaligus per rentang) |
+| Master data | — | Perumahan (bisa lebih dari satu) → Cluster → Tipe rumah (LB/LT) → Blok → No. rumah (tambah nomor sekaligus per rentang) |
 
 ## Tampilan
 
@@ -84,20 +84,22 @@ Aplikasi otomatis memilih mode:
      `name` (string) = `Perumahan Griya Asri`, `monthlyFee` (number) = `250000`
    - Firestore → buat dokumen `users/<User UID>`:
      `estateId` = `griya-asri`, `role` = `pengelola`, `name` = `Pak Hendra`
-6. Login di aplikasi sebagai pengelola → **Akun → Master data perumahan** → isi cluster,
-   blok, dan nomor rumah.
+6. Login di aplikasi sebagai pengelola → **Akun → Master data**, isi berurutan:
+   Perumahan → Cluster → Tipe rumah → Blok (pilih tipenya) → No. rumah.
+   Perumahan tambahan bisa dibuat dari layar yang sama (Cloud Function `createEstate`
+   menambahkannya ke `estateIds` pengelola).
 7. Tab **Warga** → tambah warga, pilih rumahnya dari daftar (akun & password
    sementara warga dibuat otomatis oleh Cloud Function `createResident`).
 
 ### Struktur data Firestore
 
 ```
-users/{uid}                      { estateId, role, residentId?, name }
+users/{uid}                      { estateId, estateIds?, role, residentId?, name }
 estates/{estateId}               { name, address, monthlyFee }
   clusters/{id}                  { name }
-  blocks/{id}                    { clusterId, name }
-  houseTypes/{id}                { name, buildingArea, landArea }
-  houses/{id}                    { clusterId, blockId, number, typeId }
+  blocks/{id}                    { clusterId, typeId, name }
+  houseTypes/{id}                { clusterId, name, buildingArea, landArea }
+  houses/{id}                    { clusterId, blockId, number }
   residents/{residentId}         { name, houseId, houseNo, phone, email, uid }
   bills/{residentId_YYYY-MM}     { residentId, period, amount, status, paidAt, method }
   complaints/{id}                { residentId, title, description, category, status, photoUrls, createdAt }

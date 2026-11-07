@@ -6,84 +6,13 @@ import '../theme.dart';
 import '../utils.dart';
 import '../widgets.dart';
 
-/// Master perumahan (khusus pengelola): profil perumahan, lalu
-/// Cluster > Blok > No. rumah. Data ini menjadi daftar pilihan saat
-/// menambah warga, jadi tidak perlu mengetik nomor rumah manual.
+/// Master data (khusus pengelola), mengikuti alur:
+/// Perumahan > Cluster > Tipe rumah > Blok > No. rumah.
+///
+/// Data ini menjadi daftar pilihan saat menambah warga, jadi nomor rumah
+/// tidak perlu diketik manual.
 class MasterDataScreen extends StatelessWidget {
   const MasterDataScreen({super.key});
-
-  Future<void> _editEstate(BuildContext context) async {
-    final name = TextEditingController(text: store.estateName);
-    final address = TextEditingController(text: store.estateAddress);
-    final fee = TextEditingController(text: '${store.fee}');
-    final formKey = GlobalKey<FormState>();
-
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Profil perumahan'),
-        content: Form(
-          key: formKey,
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextFormField(
-                  controller: name,
-                  decoration:
-                      const InputDecoration(labelText: 'Nama perumahan'),
-                  validator: (v) => _requiredMax(v, 100),
-                ),
-                const SizedBox(height: 12),
-                TextFormField(
-                  controller: address,
-                  minLines: 1,
-                  maxLines: 3,
-                  decoration: const InputDecoration(labelText: 'Alamat'),
-                  validator: (v) =>
-                      (v ?? '').length > 300 ? 'Maks. 300 karakter' : null,
-                ),
-                const SizedBox(height: 12),
-                TextFormField(
-                  controller: fee,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                    labelText: 'Tarif IPL per bulan',
-                    prefixText: 'Rp ',
-                  ),
-                  validator: (v) {
-                    final n = int.tryParse((v ?? '').replaceAll('.', ''));
-                    return (n == null || n <= 0) ? 'Isi angka > 0' : null;
-                  },
-                ),
-              ],
-            ),
-          ),
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Batal')),
-          FilledButton(
-            onPressed: () {
-              if (formKey.currentState!.validate()) Navigator.pop(ctx, true);
-            },
-            child: const Text('Simpan'),
-          ),
-        ],
-      ),
-    );
-    if (ok != true || !context.mounted) return;
-    await runAction(
-      context,
-      store.updateEstate(
-        name: name.text.trim(),
-        address: address.text.trim(),
-        fee: int.parse(fee.text.replaceAll('.', '')),
-      ),
-      success: 'Profil perumahan disimpan',
-    );
-  }
 
   Future<void> _editCluster(BuildContext context, [Cluster? c]) async {
     final name = await promptText(
@@ -98,6 +27,126 @@ class MasterDataScreen extends StatelessWidget {
     await runAction(context, store.saveCluster(name, id: c?.id),
         success: c == null ? 'Cluster $name ditambahkan' : 'Nama disimpan');
   }
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: store,
+      builder: (context, _) {
+        final theme = Theme.of(context);
+        final scheme = theme.colorScheme;
+        final clusters = store.sortedClusters;
+        final occupied = store.residents.where((r) => r.houseId != null).length;
+
+        return Scaffold(
+          appBar: AppBar(title: const Text('Master Data')),
+          floatingActionButton: FloatingActionButton.extended(
+            onPressed: () => _editCluster(context),
+            icon: const Icon(Icons.add),
+            label: const Text('Cluster'),
+          ),
+          body: ListView(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 96),
+            children: [
+              const _StepHint(),
+              const SizedBox(height: 16),
+              _SectionHeader(
+                step: 1,
+                title: 'Perumahan',
+                action: TextButton.icon(
+                  onPressed: () => editEstate(context, create: true),
+                  icon: const Icon(Icons.add),
+                  label: const Text('Perumahan'),
+                ),
+              ),
+              for (final e in store.estates)
+                if (e.id == store.activeEstateId)
+                  Card(
+                    color: scheme.primary,
+                    child: ListTile(
+                      iconColor: scheme.onPrimary,
+                      textColor: scheme.onPrimary,
+                      leading: const Icon(Icons.location_city),
+                      title: Text(store.estateName,
+                          style: TextStyle(
+                              color: scheme.onPrimary,
+                              fontWeight: FontWeight.w700)),
+                      subtitle: Text(
+                        [
+                          if (store.estateAddress.isNotEmpty)
+                            store.estateAddress,
+                          'IPL ${formatRupiah(store.fee)}/bulan · '
+                              '${store.houses.length} rumah, $occupied terisi',
+                        ].join('\n'),
+                        style: TextStyle(
+                            color: scheme.onPrimary.withValues(alpha: 0.85)),
+                      ),
+                      isThreeLine: store.estateAddress.isNotEmpty,
+                      trailing: IconButton(
+                        tooltip: 'Ubah profil perumahan',
+                        color: scheme.onPrimary,
+                        icon: const Icon(Icons.edit_outlined),
+                        onPressed: () => editEstate(context),
+                      ),
+                    ),
+                  )
+                else
+                  Card(
+                    child: ListTile(
+                      leading: const Icon(Icons.location_city_outlined),
+                      title: Text(e.name),
+                      subtitle: const Text('Ketuk untuk beralih'),
+                      trailing: const Icon(Icons.swap_horiz),
+                      onTap: () => runAction(
+                        context,
+                        store.switchEstate(e.id),
+                        success: 'Beralih ke ${e.name}',
+                      ),
+                    ),
+                  ),
+              const SizedBox(height: 16),
+              _SectionHeader(
+                step: 2,
+                title: 'Cluster di ${store.estateName}',
+              ),
+              if (clusters.isEmpty)
+                const EmptyState(
+                  icon: Icons.holiday_village_outlined,
+                  message: 'Belum ada cluster di perumahan ini.',
+                ),
+              for (final c in clusters)
+                _MasterTile(
+                  icon: Icons.holiday_village_outlined,
+                  title: c.name,
+                  subtitle: [
+                    '${store.typesOf(c.id).length} tipe',
+                    _countText(
+                      blocks: store.blocksOf(c.id).length,
+                      houses: store.houses.where((h) => h.clusterId == c.id),
+                    ),
+                  ].join(' · '),
+                  onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                      builder: (_) => ClusterScreen(clusterId: c.id))),
+                  onEdit: () => _editCluster(context, c),
+                  onDelete: () => _confirmDelete(
+                    context,
+                    'Hapus ${c.name}?',
+                    () => store.deleteCluster(c.id),
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// Isi cluster: tipe rumah (langkah 3) lalu blok per tipe (langkah 4).
+class ClusterScreen extends StatelessWidget {
+  const ClusterScreen({super.key, required this.clusterId});
+
+  final String clusterId;
 
   Future<void> _editType(BuildContext context, [HouseType? t]) async {
     final name = TextEditingController(text: t?.name);
@@ -179,6 +228,7 @@ class MasterDataScreen extends StatelessWidget {
     await runAction(
       context,
       store.saveHouseType(
+        clusterId,
         n,
         id: t?.id,
         buildingArea: int.tryParse(lb.text.trim()),
@@ -188,139 +238,27 @@ class MasterDataScreen extends StatelessWidget {
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return ListenableBuilder(
-      listenable: store,
-      builder: (context, _) {
-        final theme = Theme.of(context);
-        final clusters = store.sortedClusters;
-        final types = store.sortedHouseTypes;
-        final occupied = store.residents.where((r) => r.houseId != null).length;
-
-        return Scaffold(
-          appBar: AppBar(title: const Text('Master Data Perumahan')),
-          floatingActionButton: FloatingActionButton.extended(
-            onPressed: () => _editCluster(context),
-            icon: const Icon(Icons.add),
-            label: const Text('Cluster'),
-          ),
-          body: ListView(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 96),
-            children: [
-              Card(
-                child: ListTile(
-                  leading: const Icon(Icons.location_city),
-                  title: Text(store.estateName),
-                  subtitle: Text([
-                    if (store.estateAddress.isNotEmpty) store.estateAddress,
-                    'IPL ${formatRupiah(store.fee)}/bulan',
-                  ].join('\n')),
-                  isThreeLine: store.estateAddress.isNotEmpty,
-                  trailing: const Icon(Icons.edit_outlined),
-                  onTap: () => _editEstate(context),
-                ),
-              ),
-              const SizedBox(height: 8),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 4),
-                child: Text(
-                  '${clusters.length} cluster · ${store.blocks.length} blok · '
-                  '${store.houses.length} rumah · $occupied terisi',
-                  style: theme.textTheme.bodySmall
-                      ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-                ),
-              ),
-              const SizedBox(height: 16),
-              Row(
-                children: [
-                  Expanded(
-                    child:
-                        Text('Tipe rumah', style: theme.textTheme.titleMedium),
-                  ),
-                  TextButton.icon(
-                    onPressed: () => _editType(context),
-                    icon: const Icon(Icons.add),
-                    label: const Text('Tipe'),
-                  ),
-                ],
-              ),
-              if (types.isEmpty)
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
-                  child: Text(
-                    'Belum ada tipe rumah (opsional), mis. Tipe 36/72.',
-                    style: theme.textTheme.bodySmall,
-                  ),
-                ),
-              for (final t in types)
-                _MasterTile(
-                  icon: Icons.straighten,
-                  title: t.name,
-                  subtitle: [
-                    if (t.areaText.isNotEmpty) t.areaText,
-                    '${store.houses.where((h) => h.typeId == t.id).length} rumah',
-                  ].join(' · '),
-                  onTap: () => _editType(context, t),
-                  editLabel: 'Ubah',
-                  onEdit: () => _editType(context, t),
-                  onDelete: () => _confirmDelete(
-                    context,
-                    'Hapus ${t.name}?',
-                    () => store.deleteHouseType(t.id),
-                  ),
-                ),
-              const SizedBox(height: 16),
-              Text('Cluster', style: theme.textTheme.titleMedium),
-              const SizedBox(height: 4),
-              if (clusters.isEmpty)
-                const EmptyState(
-                  icon: Icons.holiday_village_outlined,
-                  message: 'Belum ada cluster.\n'
-                      'Tambahkan cluster, lalu blok dan nomor rumahnya.',
-                ),
-              for (final c in clusters)
-                _MasterTile(
-                  icon: Icons.holiday_village_outlined,
-                  title: c.name,
-                  subtitle: _countText(
-                    blocks: store.blocksOf(c.id).length,
-                    houses: store.houses.where((h) => h.clusterId == c.id),
-                  ),
-                  onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                      builder: (_) => ClusterScreen(clusterId: c.id))),
-                  onEdit: () => _editCluster(context, c),
-                  onDelete: () => _confirmDelete(
-                    context,
-                    'Hapus ${c.name}?',
-                    () => store.deleteCluster(c.id),
-                  ),
-                ),
-            ],
-          ),
-        );
-      },
+  Future<void> _editBlock(BuildContext context,
+      {HouseBlock? block, String? typeId}) async {
+    if (store.typesOf(clusterId).isEmpty) {
+      showSnack(context, 'Tambahkan tipe rumah dulu, lalu bloknya.');
+      return;
+    }
+    final result = await showDialog<(String, String)>(
+      context: context,
+      builder: (_) => _BlockDialog(
+        clusterId: clusterId,
+        block: block,
+        initialTypeId: block?.typeId ?? typeId,
+      ),
     );
-  }
-}
-
-class ClusterScreen extends StatelessWidget {
-  const ClusterScreen({super.key, required this.clusterId});
-
-  final String clusterId;
-
-  Future<void> _editBlock(BuildContext context, [HouseBlock? b]) async {
-    final name = await promptText(
+    if (result == null || !context.mounted) return;
+    final (name, chosenType) = result;
+    await runAction(
       context,
-      title: b == null ? 'Tambah blok' : 'Ubah nama blok',
-      label: 'Nama blok',
-      hint: 'Contoh: A1',
-      initial: b?.name,
-      maxLength: 20,
+      store.saveBlock(clusterId, name, id: block?.id, typeId: chosenType),
+      success: block == null ? 'Blok $name ditambahkan' : 'Blok disimpan',
     );
-    if (name == null || !context.mounted) return;
-    await runAction(context, store.saveBlock(clusterId, name, id: b?.id),
-        success: b == null ? 'Blok $name ditambahkan' : 'Nama disimpan');
   }
 
   @override
@@ -336,60 +274,137 @@ class ClusterScreen extends StatelessWidget {
                 icon: Icons.search_off, message: 'Cluster tidak ditemukan'),
           );
         }
-        final blocks = store.blocksOf(clusterId);
+        final theme = Theme.of(context);
+        final types = store.typesOf(clusterId);
+        final untyped = store.blocksOf(clusterId, typeId: noTypeId);
+
+        Widget blockTile(HouseBlock b) => _MasterTile(
+              icon: Icons.grid_view,
+              title: 'Blok ${b.name}',
+              subtitle: _countText(houses: store.housesOf(b.id)),
+              onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                  builder: (_) => BlockScreen(blockId: b.id))),
+              editLabel: 'Ubah',
+              onEdit: () => _editBlock(context, block: b),
+              onDelete: () => _confirmDelete(
+                context,
+                'Hapus blok ${b.name}?',
+                () => store.deleteBlock(b.id),
+              ),
+            );
+
         return Scaffold(
           appBar: AppBar(title: Text(cluster.name)),
-          floatingActionButton: FloatingActionButton.extended(
-            onPressed: () => _editBlock(context),
-            icon: const Icon(Icons.add),
-            label: const Text('Blok'),
-          ),
-          body: blocks.isEmpty
-              ? const EmptyState(
-                  icon: Icons.grid_view,
-                  message: 'Belum ada blok di cluster ini.',
+          floatingActionButton: types.isEmpty
+              ? FloatingActionButton.extended(
+                  onPressed: () => _editType(context),
+                  icon: const Icon(Icons.add),
+                  label: const Text('Tipe rumah'),
                 )
-              : ListView(
-                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 96),
-                  children: [
-                    for (final b in blocks)
-                      _MasterTile(
-                        icon: Icons.grid_view,
-                        title: 'Blok ${b.name}',
-                        subtitle: _countText(houses: store.housesOf(b.id)),
-                        onTap: () => Navigator.of(context).push(
-                            MaterialPageRoute(
-                                builder: (_) => BlockScreen(blockId: b.id))),
-                        onEdit: () => _editBlock(context, b),
-                        onDelete: () => _confirmDelete(
-                          context,
-                          'Hapus blok ${b.name}?',
-                          () => store.deleteBlock(b.id),
-                        ),
-                      ),
-                  ],
+              : FloatingActionButton.extended(
+                  onPressed: () => _editBlock(context),
+                  icon: const Icon(Icons.add),
+                  label: const Text('Blok'),
                 ),
+          body: ListView(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 96),
+            children: [
+              Text(store.estateName,
+                  style: theme.textTheme.bodySmall
+                      ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+              const SizedBox(height: 12),
+              _SectionHeader(
+                step: 3,
+                title: 'Tipe rumah',
+                action: TextButton.icon(
+                  onPressed: () => _editType(context),
+                  icon: const Icon(Icons.add),
+                  label: const Text('Tipe'),
+                ),
+              ),
+              if (types.isEmpty)
+                const EmptyState(
+                  icon: Icons.straighten,
+                  message: 'Belum ada tipe rumah di cluster ini.\n'
+                      'Contoh: Tipe 36/72 (LB 36 m², LT 72 m²).',
+                ),
+              for (final t in types)
+                _MasterTile(
+                  icon: Icons.straighten,
+                  title: t.name,
+                  subtitle: [
+                    if (t.areaText.isNotEmpty) t.areaText,
+                    '${store.blocksOf(clusterId, typeId: t.id).length} blok',
+                  ].join(' · '),
+                  onTap: () => _editType(context, t),
+                  editLabel: 'Ubah',
+                  onEdit: () => _editType(context, t),
+                  onDelete: () => _confirmDelete(
+                    context,
+                    'Hapus ${t.name}?',
+                    () => store.deleteHouseType(t.id),
+                  ),
+                ),
+              if (types.isNotEmpty) ...[
+                const SizedBox(height: 16),
+                const _SectionHeader(step: 4, title: 'Blok per tipe'),
+                for (final t in types) ...[
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(4, 8, 0, 0),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(t.name,
+                              style: theme.textTheme.labelLarge
+                                  ?.copyWith(color: theme.colorScheme.primary)),
+                        ),
+                        TextButton(
+                          onPressed: () => _editBlock(context, typeId: t.id),
+                          child: const Text('+ Blok'),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (store.blocksOf(clusterId, typeId: t.id).isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(4, 0, 4, 4),
+                      child: Text('Belum ada blok bertipe ini.',
+                          style: theme.textTheme.bodySmall),
+                    ),
+                  for (final b in store.blocksOf(clusterId, typeId: t.id))
+                    blockTile(b),
+                ],
+              ],
+              if (untyped.isNotEmpty) ...[
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(4, 12, 4, 0),
+                  child: Text('Belum bertipe (data lama) — ketuk ⋮ › Ubah',
+                      style: theme.textTheme.labelLarge
+                          ?.copyWith(color: theme.colorScheme.error)),
+                ),
+                for (final b in untyped) blockTile(b),
+              ],
+            ],
+          ),
         );
       },
     );
   }
 }
 
+/// Isi blok: nomor rumah (langkah 5). Tipe mengikuti blok.
 class BlockScreen extends StatelessWidget {
   const BlockScreen({super.key, required this.blockId});
 
   final String blockId;
 
   Future<void> _addHouses(BuildContext context) async {
-    final result = await showDialog<(List<String>, String?)>(
+    final numbers = await showDialog<List<String>>(
       context: context,
       builder: (_) => const _AddHousesDialog(),
     );
-    if (result == null || !context.mounted) return;
-    final (numbers, typeId) = result;
-    if (numbers.isEmpty) return;
-    final added = await runAction(
-        context, store.addHouses(blockId, numbers, typeId: typeId));
+    if (numbers == null || numbers.isEmpty || !context.mounted) return;
+    final added = await runAction(context, store.addHouses(blockId, numbers));
     if (added == null || !context.mounted) return;
     final skipped = numbers.length - added;
     showSnack(
@@ -399,22 +414,9 @@ class BlockScreen extends StatelessWidget {
     );
   }
 
-  Future<void> _setTypeForBlock(BuildContext context) async {
-    final houses = store.housesOf(blockId);
-    if (houses.isEmpty) return;
-    final picked = await pickHouseType(context,
-        title: 'Tipe untuk semua rumah di blok ini');
-    if (picked == null || !context.mounted) return;
-    await runAction(
-      context,
-      store.setHouseType(houses.map((h) => h.id), picked.typeId),
-      success: 'Tipe ${houses.length} rumah diperbarui',
-    );
-  }
-
   void _showHouse(BuildContext context, House h) {
     final r = store.residentOfHouse(h.id);
-    final type = store.houseTypeById(h.typeId);
+    final type = store.houseTypeOf(h);
     showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
@@ -428,29 +430,13 @@ class BlockScreen extends StatelessWidget {
               Text('Rumah ${store.houseLabel(h)}',
                   style: Theme.of(ctx).textTheme.titleLarge),
               const SizedBox(height: 4),
-              Text(store.clusterById(h.clusterId)?.name ?? ''),
+              Text([
+                store.estateName,
+                store.clusterById(h.clusterId)?.name ?? '',
+                if (type != null) type.name,
+              ].join(' · ')),
+              if (type?.areaText.isNotEmpty == true) Text(type!.areaText),
               const SizedBox(height: 16),
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: const Icon(Icons.straighten),
-                title: Text(type?.name ?? 'Tipe belum diatur'),
-                subtitle:
-                    type?.areaText.isNotEmpty == true ? Text(type!.areaText) : null,
-                trailing: TextButton(
-                  onPressed: () async {
-                    final picked = await pickHouseType(ctx,
-                        title: 'Tipe rumah ${store.houseLabel(h)}',
-                        selected: h.typeId);
-                    if (picked == null || !ctx.mounted) return;
-                    Navigator.pop(ctx);
-                    await runAction(
-                        context, store.setHouseType([h.id], picked.typeId),
-                        success: 'Tipe disimpan');
-                  },
-                  child: const Text('Ubah'),
-                ),
-              ),
-              const SizedBox(height: 8),
               Text(r == null
                   ? 'Belum berpenghuni.'
                   : 'Ditempati ${r.name} · ${r.phone}'),
@@ -488,109 +474,383 @@ class BlockScreen extends StatelessWidget {
                 icon: Icons.search_off, message: 'Blok tidak ditemukan'),
           );
         }
-        final scheme = Theme.of(context).colorScheme;
+        final theme = Theme.of(context);
+        final scheme = theme.colorScheme;
+        final type = store.houseTypeById(block.typeId);
         final houses = store.housesOf(blockId);
         return Scaffold(
-          appBar: AppBar(
-            title: Text('Blok ${block.name}'),
-            actions: [
-              if (houses.isNotEmpty && store.houseTypes.isNotEmpty)
-                IconButton(
-                  tooltip: 'Atur tipe semua rumah',
-                  icon: const Icon(Icons.straighten),
-                  onPressed: () => _setTypeForBlock(context),
-                ),
-            ],
-          ),
+          appBar: AppBar(title: Text('Blok ${block.name}')),
           floatingActionButton: FloatingActionButton.extended(
             onPressed: () => _addHouses(context),
             icon: const Icon(Icons.add),
             label: const Text('No. rumah'),
           ),
-          body: houses.isEmpty
-              ? const EmptyState(
-                  icon: Icons.home_outlined,
-                  message: 'Belum ada nomor rumah.\n'
-                      'Tambahkan sekaligus, mis. nomor 1 sampai 20.',
-                )
-              : GridView.builder(
-                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 96),
-                  gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-                    maxCrossAxisExtent: 110,
-                    mainAxisSpacing: 10,
-                    crossAxisSpacing: 10,
-                    childAspectRatio: 0.8,
-                  ),
-                  itemCount: houses.length,
-                  itemBuilder: (context, i) {
-                    final h = houses[i];
-                    final r = store.residentOfHouse(h.id);
-                    final filled = r != null;
-                    return Material(
-                      color: filled
-                          ? scheme.primary
-                          : scheme.surfaceContainerHighest,
-                      borderRadius: BorderRadius.circular(18),
-                      child: InkWell(
-                        borderRadius: BorderRadius.circular(18),
-                        onTap: () => _showHouse(context, h),
-                        child: Padding(
-                          padding: const EdgeInsets.all(8),
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(
-                                filled ? Icons.home : Icons.home_outlined,
-                                color: filled
-                                    ? scheme.onPrimary
-                                    : scheme.onSurfaceVariant,
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                h.number,
-                                style: TextStyle(
-                                  fontWeight: FontWeight.w800,
-                                  fontSize: 16,
-                                  color: filled
-                                      ? scheme.onPrimary
-                                      : scheme.onSurface,
-                                ),
-                              ),
-                              if (store.houseTypeById(h.typeId) case final t?)
-                                Text(
-                                  t.name.replaceFirst(
-                                      RegExp(r'^tipe\s*', caseSensitive: false),
-                                      ''),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w700,
-                                    color: filled
-                                        ? AppColors.lime
-                                        : scheme.primary,
-                                  ),
-                                ),
-                              Text(
-                                r?.name.split(' ').first ?? 'Kosong',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  color: filled
-                                      ? scheme.onPrimary.withValues(alpha: 0.85)
-                                      : scheme.onSurfaceVariant,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    );
-                  },
+          body: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
+                child: Text(
+                  [
+                    store.clusterById(block.clusterId)?.name ?? '',
+                    type == null
+                        ? 'belum bertipe'
+                        : [type.name, if (type.areaText.isNotEmpty) type.areaText]
+                            .join(' · '),
+                  ].join(' · '),
+                  style: theme.textTheme.bodySmall
+                      ?.copyWith(color: scheme.onSurfaceVariant),
                 ),
+              ),
+              Expanded(
+                child: houses.isEmpty
+                    ? const EmptyState(
+                        icon: Icons.home_outlined,
+                        message: 'Belum ada nomor rumah.\n'
+                            'Tambahkan sekaligus, mis. nomor 1 sampai 20.',
+                      )
+                    : GridView.builder(
+                        padding: const EdgeInsets.fromLTRB(16, 8, 16, 96),
+                        gridDelegate:
+                            const SliverGridDelegateWithMaxCrossAxisExtent(
+                          maxCrossAxisExtent: 110,
+                          mainAxisSpacing: 10,
+                          crossAxisSpacing: 10,
+                          childAspectRatio: 0.95,
+                        ),
+                        itemCount: houses.length,
+                        itemBuilder: (context, i) {
+                          final h = houses[i];
+                          final r = store.residentOfHouse(h.id);
+                          final filled = r != null;
+                          return Material(
+                            color: filled
+                                ? scheme.primary
+                                : scheme.surfaceContainerHighest,
+                            borderRadius: BorderRadius.circular(18),
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(18),
+                              onTap: () => _showHouse(context, h),
+                              child: Padding(
+                                padding: const EdgeInsets.all(8),
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(
+                                      filled ? Icons.home : Icons.home_outlined,
+                                      color: filled
+                                          ? AppColors.lime
+                                          : scheme.onSurfaceVariant,
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      h.number,
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.w800,
+                                        fontSize: 16,
+                                        color: filled
+                                            ? scheme.onPrimary
+                                            : scheme.onSurface,
+                                      ),
+                                    ),
+                                    Text(
+                                      r?.name.split(' ').first ?? 'Kosong',
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color: filled
+                                            ? scheme.onPrimary
+                                                .withValues(alpha: 0.85)
+                                            : scheme.onSurfaceVariant,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+              ),
+            ],
+          ),
         );
       },
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Dialog & komponen bersama
+// ---------------------------------------------------------------------------
+
+/// Dialog profil perumahan. [create] = tambah perumahan baru (lalu beralih
+/// ke sana); selain itu mengubah perumahan yang sedang aktif.
+Future<void> editEstate(BuildContext context, {bool create = false}) async {
+  final name = TextEditingController(text: create ? '' : store.estateName);
+  final address =
+      TextEditingController(text: create ? '' : store.estateAddress);
+  final fee = TextEditingController(text: create ? '$monthlyFee' : '${store.fee}');
+  final formKey = GlobalKey<FormState>();
+
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: Text(create ? 'Tambah perumahan' : 'Profil perumahan'),
+      content: Form(
+        key: formKey,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextFormField(
+                controller: name,
+                autofocus: create,
+                textCapitalization: TextCapitalization.words,
+                decoration: const InputDecoration(
+                  labelText: 'Nama perumahan',
+                  hintText: 'Contoh: Nilaya Residence',
+                ),
+                validator: (v) => _requiredMax(v, 100),
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: address,
+                minLines: 1,
+                maxLines: 3,
+                decoration: const InputDecoration(labelText: 'Alamat'),
+                validator: (v) =>
+                    (v ?? '').length > 300 ? 'Maks. 300 karakter' : null,
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: fee,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Tarif IPL per bulan',
+                  prefixText: 'Rp ',
+                ),
+                validator: (v) {
+                  final n = int.tryParse((v ?? '').replaceAll('.', ''));
+                  return (n == null || n <= 0) ? 'Isi angka > 0' : null;
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Batal')),
+        FilledButton(
+          onPressed: () {
+            if (formKey.currentState!.validate()) Navigator.pop(ctx, true);
+          },
+          child: Text(create ? 'Tambah' : 'Simpan'),
+        ),
+      ],
+    ),
+  );
+  if (ok != true || !context.mounted) return;
+  final n = name.text.trim();
+  final a = address.text.trim();
+  final f = int.parse(fee.text.replaceAll('.', ''));
+  await runAction(
+    context,
+    create
+        ? store.createEstate(name: n, address: a, fee: f)
+        : store.updateEstate(name: n, address: a, fee: f),
+    success: create ? '$n ditambahkan & aktif' : 'Profil perumahan disimpan',
+  );
+}
+
+/// Bottom sheet memilih perumahan aktif (pengelola dengan >1 perumahan).
+Future<void> showEstateSwitcher(BuildContext context) {
+  return showModalBottomSheet<void>(
+    context: context,
+    showDragHandle: true,
+    builder: (ctx) => SafeArea(
+      child: ListView(
+        shrinkWrap: true,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
+            child: Text('Pilih perumahan',
+                style: Theme.of(ctx).textTheme.titleLarge),
+          ),
+          for (final e in store.estates)
+            ListTile(
+              leading: const Icon(Icons.location_city_outlined),
+              title: Text(e.name),
+              selected: e.id == store.activeEstateId,
+              trailing: e.id == store.activeEstateId
+                  ? const Icon(Icons.check_circle)
+                  : null,
+              onTap: () {
+                Navigator.pop(ctx);
+                runAction(context, store.switchEstate(e.id));
+              },
+            ),
+        ],
+      ),
+    ),
+  );
+}
+
+class _StepHint extends StatelessWidget {
+  const _StepHint();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    const steps = ['Perumahan', 'Cluster', 'Tipe rumah', 'Blok', 'No. rumah'];
+    return Wrap(
+      crossAxisAlignment: WrapCrossAlignment.center,
+      spacing: 4,
+      runSpacing: 4,
+      children: [
+        for (var i = 0; i < steps.length; i++) ...[
+          if (i > 0)
+            Icon(Icons.chevron_right,
+                size: 16, color: theme.colorScheme.onSurfaceVariant),
+          Text('${i + 1}. ${steps[i]}',
+              style: theme.textTheme.labelMedium
+                  ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+        ],
+      ],
+    );
+  }
+}
+
+class _SectionHeader extends StatelessWidget {
+  const _SectionHeader({required this.step, required this.title, this.action});
+
+  final int step;
+  final String title;
+  final Widget? action;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Row(
+        children: [
+          CircleAvatar(
+            radius: 12,
+            backgroundColor: AppColors.lime,
+            foregroundColor: Colors.white,
+            child: Text('$step',
+                style:
+                    const TextStyle(fontSize: 12, fontWeight: FontWeight.w800)),
+          ),
+          const SizedBox(width: 8),
+          Expanded(child: Text(title, style: theme.textTheme.titleMedium)),
+          if (action != null) action!,
+        ],
+      ),
+    );
+  }
+}
+
+/// Dialog blok: nama + tipe (wajib, dari cluster yang sama).
+class _BlockDialog extends StatefulWidget {
+  const _BlockDialog({
+    required this.clusterId,
+    this.block,
+    this.initialTypeId,
+  });
+
+  final String clusterId;
+  final HouseBlock? block;
+  final String? initialTypeId;
+
+  @override
+  State<_BlockDialog> createState() => _BlockDialogState();
+}
+
+class _BlockDialogState extends State<_BlockDialog> {
+  final _formKey = GlobalKey<FormState>();
+  late final _name = TextEditingController(text: widget.block?.name);
+  late String? _typeId = widget.initialTypeId ??
+      (store.typesOf(widget.clusterId).length == 1
+          ? store.typesOf(widget.clusterId).first.id
+          : null);
+  bool _showTypeError = false;
+
+  @override
+  void dispose() {
+    _name.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return AlertDialog(
+      title: Text(widget.block == null ? 'Tambah blok' : 'Ubah blok'),
+      content: Form(
+        key: _formKey,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              TextFormField(
+                controller: _name,
+                autofocus: widget.block == null,
+                textCapitalization: TextCapitalization.characters,
+                decoration: const InputDecoration(
+                  labelText: 'Nama blok',
+                  hintText: 'Contoh: A1',
+                ),
+                validator: (v) => _requiredMax(v, 20),
+              ),
+              const SizedBox(height: 16),
+              Text('Tipe rumah di blok ini', style: theme.textTheme.labelLarge),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final t in store.typesOf(widget.clusterId))
+                    ChoiceChip(
+                      label: Text(t.name),
+                      selected: _typeId == t.id,
+                      onSelected: (_) => setState(() {
+                        _typeId = t.id;
+                        _showTypeError = false;
+                      }),
+                    ),
+                ],
+              ),
+              if (_showTypeError)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text('Pilih tipe rumah',
+                      style: TextStyle(color: theme.colorScheme.error)),
+                ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Batal')),
+        FilledButton(
+          onPressed: () {
+            final okName = _formKey.currentState!.validate();
+            setState(() => _showTypeError = _typeId == null);
+            if (okName && _typeId != null) {
+              Navigator.pop(context, (_name.text.trim(), _typeId!));
+            }
+          },
+          child: const Text('Simpan'),
+        ),
+      ],
     );
   }
 }
@@ -610,7 +870,6 @@ class _AddHousesDialogState extends State<_AddHousesDialog> {
   final _manual = TextEditingController();
   bool _range = true;
   bool _pad = true;
-  String? _typeId;
 
   @override
   void dispose() {
@@ -623,19 +882,19 @@ class _AddHousesDialogState extends State<_AddHousesDialog> {
   String? _int(String? v) =>
       int.tryParse(v ?? '') == null ? 'Isi angka' : null;
 
+  List<String> _split(String text) => text
+      .split(RegExp(r'[,\s]+'))
+      .map((s) => s.trim())
+      .where((s) => s.isNotEmpty)
+      .toList();
+
   List<String> _numbers() {
-    if (_range) {
-      final a = int.parse(_from.text);
-      final b = int.parse(_to.text);
-      return [
-        for (var n = a; n <= b; n++) _pad ? n.toString().padLeft(2, '0') : '$n',
-      ];
-    }
-    return _manual.text
-        .split(RegExp(r'[,\s]+'))
-        .map((s) => s.trim())
-        .where((s) => s.isNotEmpty)
-        .toList();
+    if (!_range) return _split(_manual.text);
+    final a = int.parse(_from.text);
+    final b = int.parse(_to.text);
+    return [
+      for (var n = a; n <= b; n++) _pad ? n.toString().padLeft(2, '0') : '$n',
+    ];
   }
 
   @override
@@ -703,9 +962,7 @@ class _AddHousesDialogState extends State<_AddHousesDialog> {
                     hintText: 'Pisahkan dengan koma: 12A, 12B, 15',
                   ),
                   validator: (v) {
-                    final list = (v ?? '')
-                        .split(RegExp(r'[,\s]+'))
-                        .where((s) => s.trim().isNotEmpty);
+                    final list = _split(v ?? '');
                     if (list.isEmpty) return 'Isi minimal satu nomor';
                     if (list.any((s) => s.length > 10)) {
                       return 'Tiap nomor maks. 10 karakter';
@@ -713,29 +970,6 @@ class _AddHousesDialogState extends State<_AddHousesDialog> {
                     return null;
                   },
                 ),
-              if (store.houseTypes.isNotEmpty) ...[
-                const SizedBox(height: 12),
-                Text('Tipe rumah',
-                    style: Theme.of(context).textTheme.labelLarge),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    ChoiceChip(
-                      label: const Text('Tanpa tipe'),
-                      selected: _typeId == null,
-                      onSelected: (_) => setState(() => _typeId = null),
-                    ),
-                    for (final t in store.sortedHouseTypes)
-                      ChoiceChip(
-                        label: Text(t.name),
-                        selected: _typeId == t.id,
-                        onSelected: (_) => setState(() => _typeId = t.id),
-                      ),
-                  ],
-                ),
-              ],
             ],
           ),
         ),
@@ -747,7 +981,7 @@ class _AddHousesDialogState extends State<_AddHousesDialog> {
         FilledButton(
           onPressed: () {
             if (_formKey.currentState!.validate()) {
-              Navigator.pop(context, (_numbers(), _typeId));
+              Navigator.pop(context, _numbers());
             }
           },
           child: const Text('Tambah'),
@@ -768,13 +1002,13 @@ class _MasterTile extends StatelessWidget {
     this.editLabel = 'Ubah nama',
   });
 
-  final String editLabel;
   final IconData icon;
   final String title;
   final String subtitle;
   final VoidCallback onTap;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
+  final String editLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -851,7 +1085,7 @@ Future<String?> promptText(
 }) async {
   final controller = TextEditingController(text: initial);
   final formKey = GlobalKey<FormState>();
-  final result = await showDialog<String>(
+  return showDialog<String>(
     context: context,
     builder: (ctx) {
       void submit() {
@@ -881,51 +1115,5 @@ Future<String?> promptText(
         ],
       );
     },
-  );
-  return result;
-}
-
-/// Hasil pilihan tipe: [typeId] null berarti "tanpa tipe".
-typedef HouseTypeChoice = ({String? typeId});
-
-/// Bottom sheet memilih tipe rumah. Mengembalikan null bila dibatalkan.
-Future<HouseTypeChoice?> pickHouseType(
-  BuildContext context, {
-  required String title,
-  String? selected,
-}) {
-  return showModalBottomSheet<HouseTypeChoice>(
-    context: context,
-    showDragHandle: true,
-    isScrollControlled: true,
-    builder: (ctx) => SafeArea(
-      child: ConstrainedBox(
-        constraints:
-            BoxConstraints(maxHeight: MediaQuery.sizeOf(ctx).height * 0.7),
-        child: ListView(
-          shrinkWrap: true,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
-              child: Text(title, style: Theme.of(ctx).textTheme.titleLarge),
-            ),
-            ListTile(
-              leading: const Icon(Icons.block),
-              title: const Text('Tanpa tipe'),
-              selected: selected == null,
-              onTap: () => Navigator.pop(ctx, (typeId: null)),
-            ),
-            for (final t in store.sortedHouseTypes)
-              ListTile(
-                leading: const Icon(Icons.straighten),
-                title: Text(t.name),
-                subtitle: t.areaText.isEmpty ? null : Text(t.areaText),
-                selected: selected == t.id,
-                onTap: () => Navigator.pop(ctx, (typeId: t.id)),
-              ),
-          ],
-        ),
-      ),
-    ),
   );
 }

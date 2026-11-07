@@ -1,6 +1,7 @@
 /**
  * Cloud Functions untuk Nilaya Living.
  *
+ *  - createEstate        (callable)  pengelola membuat perumahan baru (multi-perumahan)
  *  - createResident      (callable)  pengelola menambah warga + membuat akun login
  *  - payBill             (callable)  warga membayar tagihan (SIMULASI, lihat catatan)
  *  - generateMonthlyBills (terjadwal) membuat tagihan IPL tiap tanggal 1, 01.00 WIB
@@ -23,6 +24,8 @@ const DEFAULT_FEE = 250000;
 
 type Profile = {
   estateId: string;
+  /** Pengelola: semua perumahan yang dikelola (estateId = perumahan utama). */
+  estateIds?: string[];
   role: "warga" | "pengelola";
   residentId?: string;
   name: string;
@@ -33,6 +36,14 @@ async function profileOf(uid: string | undefined): Promise<Profile> {
   const snap = await db.doc(`users/${uid}`).get();
   if (!snap.exists) throw new HttpsError("permission-denied", "Akun tidak terdaftar.");
   return snap.data() as Profile;
+}
+
+/** Pengelola perumahan ini? (estateId utama atau salah satu estateIds) */
+function managesEstate(me: Profile, estateId: string): boolean {
+  return (
+    me.role === "pengelola" &&
+    (me.estateId === estateId || (me.estateIds ?? []).includes(estateId))
+  );
 }
 
 function requireText(value: unknown, field: string, max = 200): string {
@@ -55,11 +66,47 @@ function jakartaMonthKey(date: Date): string {
 
 // ---------------------------------------------------------------------------
 
+export const createEstate = onCall(async (req) => {
+  const uid = req.auth?.uid;
+  const me = await profileOf(uid);
+  if (me.role !== "pengelola") {
+    throw new HttpsError("permission-denied", "Hanya pengelola yang bisa menambah perumahan.");
+  }
+  const data = req.data ?? {};
+  const name = requireText(data.name, "Nama perumahan", 100);
+  const address = typeof data.address === "string" ? data.address.trim().slice(0, 300) : "";
+  const fee = Number(data.monthlyFee);
+  if (!Number.isInteger(fee) || fee <= 0) {
+    throw new HttpsError("invalid-argument", "Tarif IPL harus angka bulat > 0.");
+  }
+  const managed = Array.from(new Set([me.estateId, ...(me.estateIds ?? [])].filter(Boolean)));
+  if (managed.length >= 20) {
+    throw new HttpsError("resource-exhausted", "Maksimal 20 perumahan per akun.");
+  }
+
+  const estateRef = db.collection("estates").doc();
+  const batch = db.batch();
+  batch.set(estateRef, {
+    name,
+    address,
+    monthlyFee: fee,
+    createdBy: uid,
+    createdAt: FieldValue.serverTimestamp(),
+  });
+  batch.update(db.doc(`users/${uid}`), {
+    estateIds: FieldValue.arrayUnion(...managed, estateRef.id),
+  });
+  await batch.commit();
+  return { estateId: estateRef.id };
+});
+
+// ---------------------------------------------------------------------------
+
 export const createResident = onCall(async (req) => {
   const me = await profileOf(req.auth?.uid);
   const data = req.data ?? {};
   const estateId = requireText(data.estateId, "estateId");
-  if (me.role !== "pengelola" || me.estateId !== estateId) {
+  if (!managesEstate(me, estateId)) {
     throw new HttpsError("permission-denied", "Hanya pengelola perumahan ini yang bisa menambah warga.");
   }
   const name = requireText(data.name, "Nama", 100);
@@ -141,7 +188,9 @@ export const payBill = onCall(async (req) => {
   const estateId = requireText(data.estateId, "estateId");
   const billId = requireText(data.billId, "billId");
   const method = typeof data.method === "string" ? data.method.slice(0, 60) : "Simulasi";
-  if (me.estateId !== estateId) throw new HttpsError("permission-denied", "Akses ditolak.");
+  if (me.estateId !== estateId && !managesEstate(me, estateId)) {
+    throw new HttpsError("permission-denied", "Akses ditolak.");
+  }
 
   const ref = db.doc(`estates/${estateId}/bills/${billId}`);
   await db.runTransaction(async (tx) => {

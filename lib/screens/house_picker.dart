@@ -2,9 +2,14 @@ import 'package:flutter/material.dart';
 
 import '../models.dart';
 import '../store.dart';
+import '../widgets.dart';
 
-/// Pilih rumah bertingkat: Cluster > Blok > No. rumah, dari master data.
-/// Rumah yang sudah berpenghuni ditampilkan tapi tidak bisa dipilih.
+/// Pilih rumah bertingkat dari master data:
+/// Perumahan > Cluster > Tipe rumah > Blok > No. rumah.
+///
+/// Langkah yang pilihannya hanya satu terisi otomatis. Rumah yang sudah
+/// berpenghuni ditampilkan tapi tidak bisa dipilih. Memilih perumahan lain
+/// memindahkan perumahan aktif (warga baru masuk ke perumahan tersebut).
 class HousePickerField extends StatefulWidget {
   const HousePickerField({
     super.key,
@@ -21,20 +26,62 @@ class HousePickerField extends StatefulWidget {
 
 class _HousePickerFieldState extends State<HousePickerField> {
   String? _clusterId;
+  String? _typeId;
   String? _blockId;
 
   @override
   void initState() {
     super.initState();
     final h = widget.houseId == null ? null : store.houseById(widget.houseId!);
-    _clusterId = h?.clusterId;
-    _blockId = h?.blockId;
-    // Satu cluster saja: langsung terpilih.
-    final clusters = store.sortedClusters;
-    if (_clusterId == null && clusters.length == 1) {
-      _clusterId = clusters.first.id;
+    if (h != null) {
+      _clusterId = h.clusterId;
+      _blockId = h.blockId;
+      _typeId = store.blockById(h.blockId)?.typeId ?? noTypeId;
     }
   }
+
+  // ----- pilihan efektif (otomatis bila hanya ada satu) -----
+
+  String? get _cluster {
+    if (_clusterId != null && store.clusterById(_clusterId!) != null) {
+      return _clusterId;
+    }
+    final all = store.clusters;
+    return all.length == 1 ? all.first.id : null;
+  }
+
+  List<(String, String, String?)> _typeOptions(String clusterId) => [
+        for (final t in store.typesOf(clusterId))
+          (t.id, t.name, t.areaText.isEmpty ? null : t.areaText),
+        if (store.blocksOf(clusterId, typeId: noTypeId).isNotEmpty)
+          (noTypeId, 'Belum bertipe', null),
+      ];
+
+  String? get _type {
+    final c = _cluster;
+    if (c == null) return null;
+    final opts = _typeOptions(c);
+    if (_typeId != null && opts.any((o) => o.$1 == _typeId)) return _typeId;
+    return opts.length == 1 ? opts.first.$1 : null;
+  }
+
+  String? get _block {
+    final c = _cluster;
+    final t = _type;
+    if (c == null || t == null) return null;
+    final list = store.blocksOf(c, typeId: t);
+    if (_blockId != null && list.any((b) => b.id == _blockId)) return _blockId;
+    return list.length == 1 ? list.first.id : null;
+  }
+
+  void _reset({bool cluster = false, bool type = false}) {
+    if (cluster) _clusterId = null;
+    if (type) _typeId = null;
+    _blockId = null;
+    widget.onChanged(null);
+  }
+
+  // ----- bottom sheet -----
 
   Future<T?> _sheet<T>(String title, Widget Function(BuildContext) body) {
     return showModalBottomSheet<T>(
@@ -61,54 +108,109 @@ class _HousePickerFieldState extends State<HousePickerField> {
     );
   }
 
-  Future<void> _pickCluster() async {
-    final id = await _sheet<String>(
-      'Pilih cluster',
-      (ctx) => ListView(
-        shrinkWrap: true,
-        children: [
-          for (final c in store.sortedClusters)
-            ListTile(
-              leading: const Icon(Icons.holiday_village_outlined),
-              title: Text(c.name),
-              subtitle: Text('${_free(store.houses.where((h) => h.clusterId == c.id))} rumah kosong'),
-              selected: c.id == _clusterId,
-              onTap: () => Navigator.pop(ctx, c.id),
-            ),
-        ],
-      ),
+  Future<String?> _pickFromList(
+    String title,
+    IconData icon,
+    String? selected,
+    List<(String, String, String?)> options,
+  ) =>
+      _sheet<String>(
+        title,
+        (ctx) => ListView(
+          shrinkWrap: true,
+          children: [
+            for (final (id, label, sub) in options)
+              ListTile(
+                leading: Icon(icon),
+                title: Text(label),
+                subtitle: sub == null ? null : Text(sub),
+                selected: id == selected,
+                onTap: () => Navigator.pop(ctx, id),
+              ),
+          ],
+        ),
+      );
+
+  static int _free(Iterable<House> hs) =>
+      hs.where((h) => store.residentOfHouse(h.id) == null).length;
+
+  Future<void> _pickEstate() async {
+    final id = await _pickFromList(
+      'Pilih perumahan',
+      Icons.location_city_outlined,
+      store.activeEstateId,
+      [for (final e in store.estates) (e.id, e.name, null)],
     );
-    if (id == null || id == _clusterId) return;
+    if (id == null || id == store.activeEstateId || !mounted) return;
+    setState(() => _reset(cluster: true, type: true));
+    await runAction(context, store.switchEstate(id));
+  }
+
+  Future<void> _pickCluster() async {
+    final id = await _pickFromList(
+      'Pilih cluster',
+      Icons.holiday_village_outlined,
+      _cluster,
+      [
+        for (final c in store.sortedClusters)
+          (
+            c.id,
+            c.name,
+            '${_free(store.houses.where((h) => h.clusterId == c.id))} rumah kosong',
+          ),
+      ],
+    );
+    if (id == null || id == _cluster) return;
     setState(() {
+      _reset(type: true);
       _clusterId = id;
-      _blockId = null;
     });
-    widget.onChanged(null);
+  }
+
+  Future<void> _pickType() async {
+    final c = _cluster!;
+    final id = await _pickFromList(
+      'Pilih tipe rumah',
+      Icons.straighten,
+      _type,
+      [
+        for (final (id, label, area) in _typeOptions(c))
+          (
+            id,
+            label,
+            [
+              if (area != null) area,
+              '${_free(store.blocksOf(c, typeId: id).expand((b) => store.housesOf(b.id)))} rumah kosong',
+            ].join(' · '),
+          ),
+      ],
+    );
+    if (id == null || id == _type) return;
+    setState(() {
+      _reset();
+      _typeId = id;
+    });
   }
 
   Future<void> _pickBlock() async {
-    final id = await _sheet<String>(
+    final id = await _pickFromList(
       'Pilih blok',
-      (ctx) => ListView(
-        shrinkWrap: true,
-        children: [
-          for (final b in store.blocksOf(_clusterId!))
-            ListTile(
-              leading: const Icon(Icons.grid_view),
-              title: Text('Blok ${b.name}'),
-              subtitle: Text('${_free(store.housesOf(b.id))} rumah kosong'),
-              selected: b.id == _blockId,
-              onTap: () => Navigator.pop(ctx, b.id),
-            ),
-        ],
-      ),
+      Icons.grid_view,
+      _block,
+      [
+        for (final b in store.blocksOf(_cluster!, typeId: _type))
+          (b.id, 'Blok ${b.name}', '${_free(store.housesOf(b.id))} rumah kosong'),
+      ],
     );
-    if (id == null || id == _blockId) return;
-    setState(() => _blockId = id);
-    widget.onChanged(null);
+    if (id == null || id == _block) return;
+    setState(() {
+      _reset();
+      _blockId = id;
+    });
   }
 
   Future<void> _pickHouse() async {
+    final blockId = _block!;
     final id = await _sheet<String>(
       'Pilih no. rumah',
       (ctx) {
@@ -119,20 +221,16 @@ class _HousePickerFieldState extends State<HousePickerField> {
             spacing: 8,
             runSpacing: 8,
             children: [
-              for (final h in store.housesOf(_blockId!))
+              for (final h in store.housesOf(blockId))
                 Builder(builder: (_) {
                   final r = store.residentOfHouse(h.id);
-                  final type = store.houseTypeById(h.typeId);
                   return Tooltip(
-                    message: [
-                      r == null ? 'Kosong' : 'Ditempati ${r.name}',
-                      if (type != null) type.name,
-                    ].join(' · '),
+                    message: r == null ? 'Kosong' : 'Ditempati ${r.name}',
                     child: ChoiceChip(
                       avatar: r == null
                           ? null
-                          : Icon(Icons.person, size: 16,
-                              color: scheme.onSurfaceVariant),
+                          : Icon(Icons.person,
+                              size: 16, color: scheme.onSurfaceVariant),
                       label: Text(h.number),
                       selected: h.id == widget.houseId,
                       onSelected:
@@ -148,80 +246,88 @@ class _HousePickerFieldState extends State<HousePickerField> {
     if (id != null) widget.onChanged(id);
   }
 
-  static int _free(Iterable<House> hs) =>
-      hs.where((h) => store.residentOfHouse(h.id) == null).length;
-
   @override
   Widget build(BuildContext context) {
-    if (store.houses.isEmpty) {
-      return Padding(
-        padding: const EdgeInsets.symmetric(vertical: 8),
-        child: Text(
-          'Belum ada data rumah. Tambahkan dulu di '
-          'Akun → Master data perumahan.',
-          style: TextStyle(color: Theme.of(context).colorScheme.error),
-        ),
-      );
-    }
-    final cluster = _clusterId == null ? null : store.clusterById(_clusterId!);
-    final block = _blockId == null ? null : store.blockById(_blockId!);
-    final house =
-        widget.houseId == null ? null : store.houseById(widget.houseId!);
+    return ListenableBuilder(
+      listenable: store,
+      builder: (context, _) {
+        final clusterId = _cluster;
+        final typeId = _type;
+        final blockId = _block;
+        final cluster = clusterId == null ? null : store.clusterById(clusterId);
+        final type = typeId == null || typeId == noTypeId
+            ? null
+            : store.houseTypeById(typeId);
+        final block = blockId == null ? null : store.blockById(blockId);
+        final house =
+            widget.houseId == null ? null : store.houseById(widget.houseId!);
 
-    return FormField<String>(
-      validator: (_) => widget.houseId == null ? 'Pilih no. rumah' : null,
-      builder: (state) => Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _PickerBox(
-            label: 'Cluster',
-            value: cluster?.name,
-            icon: Icons.holiday_village_outlined,
-            onTap: _pickCluster,
-          ),
-          const SizedBox(height: 10),
-          Row(
+        return FormField<String>(
+          validator: (_) => widget.houseId == null ? 'Pilih no. rumah' : null,
+          builder: (state) => Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Expanded(
-                child: _PickerBox(
-                  label: 'Blok',
-                  value: block?.name,
-                  icon: Icons.grid_view,
-                  onTap: cluster == null ? null : _pickBlock,
-                ),
+              _PickerBox(
+                label: 'Perumahan',
+                value: store.estateName,
+                icon: Icons.location_city_outlined,
+                onTap: _pickEstate,
               ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: _PickerBox(
-                  label: 'No. rumah',
-                  value: house?.number,
-                  icon: Icons.home_outlined,
-                  onTap: block == null ? null : _pickHouse,
-                  errorText: state.errorText,
+              const SizedBox(height: 10),
+              if (store.houses.isEmpty)
+                Text(
+                  'Perumahan ini belum punya data rumah. Tambahkan dulu di '
+                  'Akun → Master data.',
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                )
+              else ...[
+                _PickerBox(
+                  label: 'Cluster',
+                  value: cluster?.name,
+                  icon: Icons.holiday_village_outlined,
+                  onTap: _pickCluster,
                 ),
-              ),
+                const SizedBox(height: 10),
+                _PickerBox(
+                  label: 'Tipe rumah',
+                  value: typeId == noTypeId
+                      ? 'Belum bertipe'
+                      : type == null
+                          ? null
+                          : [type.name, if (type.areaText.isNotEmpty) type.areaText]
+                              .join(' · '),
+                  icon: Icons.straighten,
+                  onTap: cluster == null ? null : _pickType,
+                ),
+                const SizedBox(height: 10),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: _PickerBox(
+                        label: 'Blok',
+                        value: block?.name,
+                        icon: Icons.grid_view,
+                        onTap: typeId == null ? null : _pickBlock,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: _PickerBox(
+                        label: 'No. rumah',
+                        value: house?.number,
+                        icon: Icons.home_outlined,
+                        onTap: block == null ? null : _pickHouse,
+                        errorText: state.errorText,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
             ],
           ),
-          if (store.houseTypeById(house?.typeId) case final t?)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(4, 8, 4, 0),
-              child: Row(
-                children: [
-                  Icon(Icons.straighten,
-                      size: 16, color: Theme.of(context).colorScheme.primary),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: Text(
-                      [t.name, if (t.areaText.isNotEmpty) t.areaText]
-                          .join(' · '),
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-        ],
-      ),
+        );
+      },
     );
   }
 }

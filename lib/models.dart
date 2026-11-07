@@ -63,7 +63,19 @@ class Resident {
       );
 }
 
-// ---------- Master perumahan: Cluster > Blok > No. rumah ----------
+// ---------- Master perumahan ----------
+//
+// Perumahan > Cluster > Tipe rumah > Blok > No. rumah.
+// Tipe rumah milik cluster; setiap blok berisi satu tipe; nomor rumah
+// mengikuti tipe bloknya.
+
+/// Perumahan yang bisa diakses akun ini (pengelola bisa lebih dari satu).
+class EstateInfo {
+  EstateInfo({required this.id, required this.name});
+
+  final String id;
+  String name;
+}
 
 class Cluster {
   Cluster({required this.id, required this.name});
@@ -76,29 +88,41 @@ class Cluster {
 }
 
 class HouseBlock {
-  HouseBlock({required this.id, required this.clusterId, required this.name});
+  HouseBlock({
+    required this.id,
+    required this.clusterId,
+    required this.name,
+    this.typeId,
+  });
 
   final String id;
   final String clusterId;
   String name;
 
+  /// Tipe rumah blok ini (null hanya untuk data lama).
+  String? typeId;
+
   factory HouseBlock.fromMap(String id, Map<String, dynamic> m) => HouseBlock(
         id: id,
         clusterId: m['clusterId'] as String? ?? '',
         name: m['name'] as String? ?? '',
+        typeId: m['typeId'] as String?,
       );
 }
 
-/// Tipe rumah, mis. "Tipe 36/72" (luas bangunan 36 m², tanah 72 m²).
+/// Tipe rumah dalam satu cluster, mis. "Tipe 36/72"
+/// (luas bangunan 36 m², tanah 72 m²).
 class HouseType {
   HouseType({
     required this.id,
+    required this.clusterId,
     required this.name,
     this.buildingArea,
     this.landArea,
   });
 
   final String id;
+  final String clusterId;
   String name;
   int? buildingArea;
   int? landArea;
@@ -111,6 +135,7 @@ class HouseType {
 
   factory HouseType.fromMap(String id, Map<String, dynamic> m) => HouseType(
         id: id,
+        clusterId: m['clusterId'] as String? ?? '',
         name: m['name'] as String? ?? '',
         buildingArea: (m['buildingArea'] as num?)?.toInt(),
         landArea: (m['landArea'] as num?)?.toInt(),
@@ -123,7 +148,6 @@ class House {
     required this.clusterId,
     required this.blockId,
     required this.number,
-    this.typeId,
   });
 
   final String id;
@@ -133,17 +157,16 @@ class House {
   /// Nomor rumah sebagai teks, mis. "05" atau "12A".
   final String number;
 
-  /// ID tipe rumah (opsional).
-  String? typeId;
-
   factory House.fromMap(String id, Map<String, dynamic> m) => House(
         id: id,
         clusterId: m['clusterId'] as String? ?? '',
         blockId: m['blockId'] as String? ?? '',
         number: m['number'] as String? ?? '',
-        typeId: m['typeId'] as String?,
       );
 }
+
+/// Penanda pilihan "tanpa tipe" untuk blok lama yang belum bertipe.
+const noTypeId = '__none__';
 
 /// Urutan alami: "2" < "10" < "10A".
 int compareHouseNumber(String a, String b) {

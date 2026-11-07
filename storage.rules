@@ -10,10 +10,16 @@ service firebase.storage {
       return firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data;
     }
 
+    // Pengelola bisa mengelola beberapa perumahan (estateIds).
+    function adminOf(estateId) {
+      return me().role == 'pengelola'
+        && (me().estateId == estateId || estateId in me().get('estateIds', []));
+    }
+
     match /estates/{estateId}/complaints/{residentId}/{complaintId}/{fileName} {
       allow read: if request.auth != null
-        && me().estateId == estateId
-        && (me().role == 'pengelola' || me().residentId == residentId);
+        && (adminOf(estateId)
+          || (me().estateId == estateId && me().residentId == residentId));
 
       allow create: if request.auth != null
         && me().estateId == estateId

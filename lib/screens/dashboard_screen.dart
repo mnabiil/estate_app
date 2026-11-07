@@ -5,6 +5,7 @@ import '../store.dart';
 import '../theme.dart';
 import '../utils.dart';
 import 'announcements_screen.dart';
+import 'master_data_screen.dart';
 import 'visitors_screen.dart';
 
 /// Indeks tab di HomeShell.
@@ -93,27 +94,38 @@ class DashboardScreen extends StatelessWidget {
                     ),
                     const SizedBox(width: 12),
                     Expanded(
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 14, vertical: 10),
-                        decoration: BoxDecoration(
-                          color: scheme.surfaceContainerHighest,
+                      child: Material(
+                        color: scheme.surfaceContainerHighest,
+                        borderRadius: BorderRadius.circular(30),
+                        child: InkWell(
                           borderRadius: BorderRadius.circular(30),
-                        ),
-                        child: Row(
-                          children: [
-                            Icon(Icons.location_on_outlined,
-                                size: 18, color: scheme.primary),
-                            const SizedBox(width: 6),
-                            Expanded(
-                              child: Text(
-                                estateName,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: theme.textTheme.labelLarge,
-                              ),
+                          // Pengelola dengan beberapa perumahan: ketuk untuk
+                          // berpindah perumahan.
+                          onTap: store.isAdmin && store.estates.length > 1
+                              ? () => showEstateSwitcher(context)
+                              : null,
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 14, vertical: 10),
+                            child: Row(
+                              children: [
+                                Icon(Icons.location_on_outlined,
+                                    size: 18, color: scheme.primary),
+                                const SizedBox(width: 6),
+                                Expanded(
+                                  child: Text(
+                                    estateName,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: theme.textTheme.labelLarge,
+                                  ),
+                                ),
+                                if (store.isAdmin && store.estates.length > 1)
+                                  Icon(Icons.unfold_more,
+                                      size: 18, color: scheme.primary),
+                              ],
                             ),
-                          ],
+                          ),
                         ),
                       ),
                     ),
