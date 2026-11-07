@@ -57,7 +57,10 @@ class AccountScreen extends StatelessWidget {
               leading: const Icon(Icons.family_restroom),
               title: const Text('Anggota rumah'),
               subtitle: Text(user.isPrimary
-                  ? 'Tambah akun keluarga atau penyewa'
+                  ? (store.joinRequestsFor(user.residentId!).isNotEmpty
+                      ? '${store.joinRequestsFor(user.residentId!).length} '
+                          'permintaan bergabung menunggu'
+                      : 'Tambah akun keluarga atau penyewa')
                   : '${store.membersOf(user.residentId!).length + 1} orang '
                       'di rumah ini'),
               trailing: const Icon(Icons.chevron_right),

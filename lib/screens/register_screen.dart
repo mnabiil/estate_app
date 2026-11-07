@@ -42,6 +42,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
   String? _houseId;
 
   Occupancy _occupancy = Occupancy.pemilik;
+
+  /// Diisi bila rumah yang dipilih sudah berpenghuni (permintaan gabung).
+  MemberRelation? _relation;
+  bool _showRelationError = false;
+
+  bool get _isJoin =>
+      _houseId != null && (_options?.occupied.contains(_houseId) ?? false);
   XFile? _document;
   bool _obscure = true;
   bool _agree = false;
@@ -57,6 +64,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       _name.text = prev.name;
       _phone.text = prev.phone;
       _occupancy = prev.occupancy;
+      _relation = prev.relation;
     }
     _loadEstates();
   }
@@ -157,6 +165,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
     );
   }
 
+  static String _availability(RegistrationOptions o, Iterable<House> hs) {
+    final list = hs.toList();
+    return '${o.freeIn(list)} kosong · ${o.occupiedIn(list)} berpenghuni';
+  }
+
   Future<void> _pickEstate() async {
     final list = _estates ?? const [];
     final id = await _pick(
@@ -177,7 +190,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
           (
             c.id,
             c.name,
-            '${o.freeIn(o.houses.where((h) => h.clusterId == c.id))} rumah tersedia',
+            _availability(o, o.houses.where((h) => h.clusterId == c.id)),
             true,
           ),
       ],
@@ -202,7 +215,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
             t.name,
             [
               if (t.areaText.isNotEmpty) t.areaText,
-              '${o.freeIn(o.blocksOf(_clusterId!, t.id).expand((b) => o.housesOf(b.id)))} tersedia',
+              _availability(
+                  o, o.blocksOf(_clusterId!, t.id).expand((b) => o.housesOf(b.id))),
             ].join(' · '),
             true,
           ),
@@ -223,7 +237,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       'Pilih blok',
       [
         for (final b in o.blocksOf(_clusterId!, _typeId!))
-          (b.id, 'Blok ${b.name}', '${o.freeIn(o.housesOf(b.id))} tersedia', true),
+          (b.id, 'Blok ${b.name}', _availability(o, o.housesOf(b.id)), true),
       ],
       _blockId,
     );
@@ -247,7 +261,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
             children: [
               Text('Pilih no. rumah', style: Theme.of(ctx).textTheme.titleLarge),
               const SizedBox(height: 4),
-              Text('Nomor abu-abu sudah berpenghuni atau sedang diajukan.',
+              Text(
+                  'Rumah kosong: daftar sebagai warga baru. Rumah bertanda '
+                  'ikon orang sudah berpenghuni: ajukan gabung sebagai anggota '
+                  'keluarga/penyewa. Nomor abu-abu sedang diajukan orang lain.',
                   style: Theme.of(ctx).textTheme.bodySmall),
               const SizedBox(height: 12),
               Wrap(
@@ -256,9 +273,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 children: [
                   for (final h in o.housesOf(_blockId!))
                     ChoiceChip(
+                      avatar: o.occupied.contains(h.id)
+                          ? const Icon(Icons.person, size: 16)
+                          : null,
                       label: Text(h.number),
                       selected: h.id == _houseId,
-                      onSelected: o.available.contains(h.id)
+                      onSelected: o.selectable(h.id)
                           ? (_) => Navigator.pop(ctx, h.id)
                           : null,
                     ),
@@ -279,8 +299,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   Future<void> _submit() async {
     final ok = _formKey.currentState!.validate();
-    setState(() => _showHouseError = _houseId == null);
-    if (!ok || _houseId == null) return;
+    setState(() {
+      _showHouseError = _houseId == null;
+      _showRelationError = _isJoin && _relation == null;
+    });
+    if (!ok || _houseId == null || _showRelationError) return;
     if (!_agree) {
       showSnack(context, 'Centang pernyataan kebenaran data terlebih dahulu.');
       return;
@@ -296,6 +319,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         email: widget.resubmit ? null : _email.text.trim(),
         password: widget.resubmit ? null : _password.text,
         document: _document,
+        relation: _isJoin ? _relation : null,
       );
       if (!mounted) return;
       // Aplikasi otomatis menampilkan layar "menunggu verifikasi".
@@ -309,6 +333,66 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   String? _required(String? v) =>
       (v == null || v.trim().isEmpty) ? 'Wajib diisi' : null;
+
+  /// Rumah berpenghuni: pendaftaran menjadi permintaan gabung.
+  Widget _joinCard(ThemeData theme) {
+    final scheme = theme.colorScheme;
+    return Card(
+      margin: const EdgeInsets.only(top: 12),
+      color: scheme.secondaryContainer,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.family_restroom, color: scheme.onSecondaryContainer),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text('Rumah ini sudah berpenghuni',
+                      style: theme.textTheme.titleSmall
+                          ?.copyWith(color: scheme.onSecondaryContainer)),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Anda akan mengajukan diri sebagai anggota rumah. Permintaan '
+              'disetujui oleh kepala keluarga rumah ini atau pengelola.',
+              style: TextStyle(color: scheme.onSecondaryContainer),
+            ),
+            const SizedBox(height: 12),
+            Text('Hubungan Anda dengan kepala keluarga',
+                style: theme.textTheme.labelLarge
+                    ?.copyWith(color: scheme.onSecondaryContainer)),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final r in MemberRelation.values)
+                  ChoiceChip(
+                    label: Text(r.label),
+                    selected: _relation == r,
+                    onSelected: (_) => setState(() {
+                      _relation = r;
+                      _showRelationError = false;
+                    }),
+                  ),
+              ],
+            ),
+            if (_showRelationError)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text('Pilih hubungan',
+                    style: TextStyle(color: scheme.error)),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -402,6 +486,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     ),
                   ],
                 ),
+                if (_isJoin) _joinCard(theme),
               ],
             ],
             if (_loadError != null)
@@ -436,20 +521,22 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 return digits.length < 9 ? 'No. HP tidak valid' : null;
               },
             ),
-            const SizedBox(height: 12),
-            Text('Status hunian', style: theme.textTheme.labelLarge),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 8,
-              children: [
-                for (final oc in Occupancy.values)
-                  ChoiceChip(
-                    label: Text(oc.label),
-                    selected: _occupancy == oc,
-                    onSelected: (_) => setState(() => _occupancy = oc),
-                  ),
-              ],
-            ),
+            if (!_isJoin) ...[
+              const SizedBox(height: 12),
+              Text('Status hunian', style: theme.textTheme.labelLarge),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                children: [
+                  for (final oc in Occupancy.values)
+                    ChoiceChip(
+                      label: Text(oc.label),
+                      selected: _occupancy == oc,
+                      onSelected: (_) => setState(() => _occupancy = oc),
+                    ),
+                ],
+              ),
+            ],
             const SizedBox(height: 12),
             Text('Foto KTP / bukti hunian (opsional)',
                 style: theme.textTheme.labelLarge),
@@ -547,7 +634,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   ? 'Mengirim...'
                   : widget.resubmit
                       ? 'Ajukan ulang'
-                      : 'Daftar'),
+                      : _isJoin
+                          ? 'Ajukan gabung'
+                          : 'Daftar'),
             ),
           ],
         ),
@@ -654,11 +743,15 @@ class PendingRegistrationScreen extends StatelessWidget {
             const SizedBox(height: 8),
             Text(
               rejected
-                  ? 'Pengelola belum dapat menyetujui pendaftaran Anda. '
-                      'Perbaiki data sesuai catatan di bawah lalu ajukan ulang.'
-                  : 'Pendaftaran Anda sudah diterima dan sedang diperiksa '
-                      'pengelola. Aplikasi akan terbuka otomatis setelah '
-                      'disetujui.',
+                  ? 'Pendaftaran Anda belum dapat disetujui. Perbaiki data '
+                      'sesuai catatan di bawah lalu ajukan ulang.'
+                  : reg?.isJoin == true
+                      ? 'Permintaan gabung Anda sedang menunggu persetujuan '
+                          'kepala keluarga rumah ini atau pengelola. Aplikasi '
+                          'akan terbuka otomatis setelah disetujui.'
+                      : 'Pendaftaran Anda sudah diterima dan sedang diperiksa '
+                          'pengelola. Aplikasi akan terbuka otomatis setelah '
+                          'disetujui.',
               style: theme.textTheme.bodyMedium
                   ?.copyWith(color: scheme.onSurfaceVariant),
             ),
@@ -674,7 +767,10 @@ class PendingRegistrationScreen extends StatelessWidget {
                           style: theme.textTheme.titleMedium),
                       if (reg.clusterName.isNotEmpty) Text(reg.clusterName),
                       const SizedBox(height: 8),
-                      Text('${reg.name} · ${reg.occupancy.label}'),
+                      Text(reg.isJoin
+                          ? '${reg.name} · gabung sebagai '
+                              '${reg.relation?.label ?? 'anggota'}'
+                          : '${reg.name} · ${reg.occupancy.label}'),
                       Text('${reg.phone} · ${reg.email}',
                           style: theme.textTheme.bodySmall),
                       const SizedBox(height: 8),

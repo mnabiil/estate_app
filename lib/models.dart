@@ -692,6 +692,10 @@ enum RegistrationStatus {
   final String label;
 }
 
+/// `baru`: menempati rumah kosong (menjadi kepala keluarga).
+/// `gabung`: bergabung ke rumah yang sudah berpenghuni sebagai anggota.
+enum RegistrationKind { baru, gabung }
+
 /// Pendaftaran warga baru. ID dokumen = uid akun pendaftar.
 class Registration {
   Registration({
@@ -709,10 +713,24 @@ class Registration {
     this.status = RegistrationStatus.menunggu,
     this.note = '',
     this.reviewedAt,
+    this.kind = RegistrationKind.baru,
+    this.relation,
+    this.residentId,
   });
 
   final String id;
   final String estateId;
+
+  /// Warga baru (rumah kosong) atau gabung ke rumah berpenghuni.
+  RegistrationKind kind;
+
+  /// Gabung: hubungan dengan kepala keluarga.
+  MemberRelation? relation;
+
+  /// Gabung: rumah tangga (data warga) yang dituju.
+  String? residentId;
+
+  bool get isJoin => kind == RegistrationKind.gabung;
   String name;
   String phone;
   final String email;
@@ -748,6 +766,11 @@ class Registration {
         note: m['note'] as String? ?? '',
         createdAt: _date(m['createdAt']) ?? DateTime.now(),
         reviewedAt: _date(m['reviewedAt']),
+        kind: RegistrationKind.values.byName(m['kind'] as String? ?? 'baru'),
+        relation: m['relation'] == null
+            ? null
+            : MemberRelation.values.byName(m['relation'] as String),
+        residentId: m['residentId'] as String?,
       );
 }
 
@@ -768,6 +791,7 @@ class RegistrationOptions {
     required this.blocks,
     required this.houses,
     required this.available,
+    this.occupied = const {},
   });
 
   final List<Cluster> clusters;
@@ -777,6 +801,13 @@ class RegistrationOptions {
 
   /// ID rumah yang kosong dan tidak sedang diajukan pendaftar lain.
   final Set<String> available;
+
+  /// ID rumah yang sudah berpenghuni (bisa diajukan "gabung").
+  final Set<String> occupied;
+
+  /// Rumah bisa dipilih: kosong (warga baru) atau berpenghuni (gabung).
+  bool selectable(String houseId) =>
+      available.contains(houseId) || occupied.contains(houseId);
 
   List<Cluster> get sortedClusters =>
       clusters.toList()..sort((a, b) => a.name.compareTo(b.name));
@@ -796,6 +827,9 @@ class RegistrationOptions {
 
   int freeIn(Iterable<House> hs) => hs.where((h) => available.contains(h.id)).length;
 
+  int occupiedIn(Iterable<House> hs) =>
+      hs.where((h) => occupied.contains(h.id)).length;
+
   String labelOf(House h) {
     final b = blocks.where((b) => b.id == h.blockId).firstOrNull;
     return '${b?.name ?? '?'}/${h.number}';
@@ -814,6 +848,10 @@ class RegistrationOptions {
       available: {
         for (final e in list('houses'))
           if (e['available'] == true) e['id'] as String,
+      },
+      occupied: {
+        for (final e in list('houses'))
+          if (e['occupied'] == true) e['id'] as String,
       },
     );
   }

@@ -57,6 +57,12 @@ sendiri (password sementara, wajib diganti) dan berbagi data rumah yang sama kar
 `residentId` yang sama; hanya kepala keluarga & pengelola yang bisa menambah/menghapus anggota.
 Cloud Functions: `addHouseholdMember`, `removeHouseholdMember` (menghapus akun login juga).
 
+**Gabung ke rumah** (registrasi mandiri): rumah yang sudah berpenghuni juga bisa dipilih saat
+mendaftar. Pendaftaran menjadi *permintaan gabung* dengan hubungan (suami/istri, anak, orang
+tua, saudara, penyewa, lainnya) dan disetujui oleh **kepala keluarga rumah itu** (Akun →
+Anggota rumah) atau pengelola. Setelah disetujui, pendaftar menjadi anggota rumah. Nama
+penghuni tidak ditampilkan ke pendaftar.
+
 ## Import dari Excel
 
 Master Data → **Import dari Excel** (pengelola):
@@ -138,7 +144,8 @@ users/{uid}                      { estateId, estateIds?, role: warga|pengelola|p
 estates/{estateId}               { name, address, monthlyFee, renovationDepositSmall, renovationDepositLarge }
   members/{uid}                  { residentId, name, relation, phone, email, addedBy, createdAt }
   registrations/{uid}            { estateId, name, phone, email, houseId, houseNo, clusterName, occupancy,
-                                   docUrl, status: menunggu|disetujui|ditolak, note, createdAt, reviewedAt }
+                                   docUrl, kind: baru|gabung, relation?, residentId?,
+                                   status: menunggu|disetujui|ditolak, note, createdAt, reviewedAt }
   clusters/{id}                  { name }
   blocks/{id}                    { clusterId, typeId, name }
   houseTypes/{id}                { clusterId, name, buildingArea, landArea }

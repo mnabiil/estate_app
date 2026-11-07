@@ -129,12 +129,13 @@ void main() {
 
     test('pengelola menolak: alasan wajib', () async {
       s.login(Role.pengelola);
-      final reg = s.pendingRegistrations.single;
+      final reg = s.pendingRegistrations
+          .firstWhere((r) => r.name == 'Hendra Gunawan');
       expect(s.rejectRegistration(reg.id, ' '), throwsStateError);
       await s.rejectRegistration(reg.id, 'Data tidak sesuai');
       expect(reg.status, RegistrationStatus.ditolak);
       expect(reg.note, 'Data tidak sesuai');
-      expect(s.pendingRegistrations, isEmpty);
+      expect(s.pendingRegistrations.map((r) => r.name), ['Dimas Santoso']);
     });
 
     test('mendaftar ke perumahan lain (tidak aktif)', () async {
@@ -150,7 +151,8 @@ void main() {
 
       await s.logout();
       s.login(Role.pengelola);
-      expect(s.pendingRegistrations.map((r) => r.name), ['Hendra Gunawan']);
+      expect(s.pendingRegistrations.map((r) => r.name),
+          ['Hendra Gunawan', 'Dimas Santoso']);
       await s.switchEstate('nilaya-residence');
       expect(s.pendingRegistrations.map((r) => r.name), ['Dina']);
     });
@@ -188,6 +190,102 @@ void main() {
             email: 'a@b.id',
             password: 'lemah',
           ),
+          throwsStateError);
+    });
+  });
+
+  group('gabung ke rumah berpenghuni', () {
+    Future<void> join(String name, String email, House h,
+            {MemberRelation relation = MemberRelation.penyewa}) =>
+        s.registerResident(
+          estateId: 'griya-asri',
+          houseId: h.id,
+          name: name,
+          phone: '0812-3333-4444',
+          occupancy: Occupancy.keluarga,
+          email: email,
+          password: 'rahasia123',
+          relation: relation,
+        );
+
+    test('rumah berpenghuni bisa dipilih untuk gabung', () async {
+      final o = await s.registrationOptions('griya-asri');
+      final budiHouse = house('A1', '05');
+      expect(o.occupied.contains(budiHouse.id), isTrue);
+      expect(o.available.contains(budiHouse.id), isFalse);
+      expect(o.selectable(budiHouse.id), isTrue);
+      // Permintaan gabung tidak mengunci rumah.
+      expect(o.selectable(house('A1', '01').id), isTrue);
+    });
+
+    test('gabung hanya ke rumah berpenghuni; warga baru hanya ke rumah kosong',
+        () {
+      expect(join('A', 'a@contoh.id', house('A1', '01')), throwsStateError);
+      expect(register(name: 'B', email: 'b@contoh.id', houseId: house('A1', '05').id),
+          throwsStateError);
+    });
+
+    test('kepala keluarga menyetujui permintaan gabung', () async {
+      await join('Pak Kos', 'kos@contoh.id', house('A1', '05'));
+      final reg = s.myRegistration!;
+      expect(reg.isJoin, isTrue);
+      expect(reg.residentId, 'R1');
+      expect(reg.relation, MemberRelation.penyewa);
+      await s.logout();
+
+      // Kepala keluarga rumah lain & anggota rumah tidak berhak.
+      s.login(Role.warga, residentId: 'R2');
+      expect(s.canReviewRegistration(reg), isFalse);
+      expect(s.approveRegistration(reg.id), throwsStateError);
+      s.login(Role.warga, memberId: 'M-ANI');
+      expect(s.canReviewRegistration(reg), isFalse);
+      expect(s.rejectRegistration(reg.id, 'x'), throwsStateError);
+
+      // Budi (kepala keluarga A1/05) melihat & menyetujui.
+      s.login(Role.warga, residentId: 'R1');
+      expect(s.joinRequestsFor('R1').map((r) => r.name),
+          containsAll(['Pak Kos', 'Dimas Santoso']));
+      expect(s.pendingRegistrations.map((r) => r.name),
+          isNot(contains('Hendra Gunawan')));
+      await s.approveRegistration(reg.id);
+      expect(reg.status, RegistrationStatus.disetujui);
+      final m = s.membersOf('R1').firstWhere((m) => m.name == 'Pak Kos');
+      expect(m.relation, MemberRelation.penyewa);
+      expect(m.email, 'kos@contoh.id');
+    });
+
+    test('kepala keluarga menolak; pengelola juga bisa menyetujui', () async {
+      s.login(Role.warga, residentId: 'R1');
+      final dimas = s.joinRequestsFor('R1').single;
+      await s.rejectRegistration(dimas.id, 'Bukan anggota keluarga kami');
+      expect(dimas.status, RegistrationStatus.ditolak);
+
+      await s.logout();
+      await join('Sinta', 'sinta@contoh.id', house('A1', '07'),
+          relation: MemberRelation.anak);
+      final reg = s.myRegistration!;
+      await s.logout();
+      s.login(Role.pengelola);
+      await s.approveRegistration(reg.id);
+      expect(s.membersOf(reg.residentId!).single.name, 'Sinta');
+    });
+
+    test('anggota rumah penuh', () async {
+      s.login(Role.warga, residentId: 'R1');
+      for (var i = s.membersOf('R1').length; i < maxHouseholdMembers; i++) {
+        await s.addMember(
+            residentId: 'R1',
+            name: 'Anggota $i',
+            relation: MemberRelation.anak,
+            phone: '',
+            email: '');
+      }
+      // Permintaan yang sudah masuk tidak bisa disetujui.
+      final dimas = s.joinRequestsFor('R1').single;
+      expect(s.approveRegistration(dimas.id), throwsStateError);
+      await s.logout();
+      // Permintaan baru ditolak sejak awal.
+      expect(join('Telat', 'telat@contoh.id', house('A1', '05')),
           throwsStateError);
     });
   });

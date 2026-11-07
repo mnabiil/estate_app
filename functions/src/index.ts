@@ -275,22 +275,26 @@ async function openEstate(estateId: string) {
   return snap;
 }
 
-/** ID rumah yang sudah ditempati warga atau sedang diajukan pendaftar lain. */
-async function unavailableHouses(estateId: string, exceptUid?: string): Promise<Set<string>> {
+/**
+ * Status rumah untuk pendaftaran: `occupied` = rumah -> residentId penghuni;
+ * `pending` = rumah kosong yang sedang diajukan pendaftar lain (warga baru).
+ */
+async function houseStatus(estateId: string, exceptUid?: string) {
   const estate = db.doc(`estates/${estateId}`);
-  const [residents, pending] = await Promise.all([
+  const [residents, pendingRegs] = await Promise.all([
     estate.collection("residents").select("houseId").get(),
     estate.collection("registrations").where("status", "==", "menunggu").get(),
   ]);
-  const taken = new Set<string>();
+  const occupied = new Map<string, string>();
   residents.docs.forEach((d) => {
     const h = d.get("houseId");
-    if (typeof h === "string") taken.add(h);
+    if (typeof h === "string") occupied.set(h, d.id);
   });
-  pending.docs.forEach((d) => {
-    if (d.id !== exceptUid) taken.add(String(d.get("houseId")));
+  const pending = new Set<string>();
+  pendingRegs.docs.forEach((d) => {
+    if (d.id !== exceptUid && d.get("kind") !== "gabung") pending.add(String(d.get("houseId")));
   });
-  return taken;
+  return { occupied, pending };
 }
 
 /** Tanpa login: perumahan yang membuka pendaftaran mandiri. */
@@ -309,19 +313,24 @@ export const getRegistrationOptions = onCall(async (req) => {
   const estateId = requireText(req.data?.estateId, "estateId");
   await openEstate(estateId);
   const estate = db.doc(`estates/${estateId}`);
-  const [clusters, types, blocks, houses, taken] = await Promise.all([
+  const [clusters, types, blocks, houses, status] = await Promise.all([
     estate.collection("clusters").get(),
     estate.collection("houseTypes").get(),
     estate.collection("blocks").get(),
     estate.collection("houses").get(),
-    unavailableHouses(estateId, req.auth?.uid),
+    houseStatus(estateId, req.auth?.uid),
   ]);
   const plain = (d: FirebaseFirestore.QueryDocumentSnapshot) => ({ id: d.id, ...d.data() });
   return {
     clusters: clusters.docs.map(plain),
     types: types.docs.map(plain),
     blocks: blocks.docs.map(plain),
-    houses: houses.docs.map((d) => ({ ...plain(d), available: !taken.has(d.id) })),
+    // Hanya status rumah; nama/data penghuni tidak dikirim.
+    houses: houses.docs.map((d) => ({
+      ...plain(d),
+      available: !status.occupied.has(d.id) && !status.pending.has(d.id),
+      occupied: status.occupied.has(d.id),
+    })),
   };
 });
 
@@ -345,6 +354,10 @@ export const submitRegistration = onCall(async (req) => {
   }
   const docUrl =
     typeof data.docUrl === "string" && data.docUrl.startsWith("https://") ? data.docUrl : null;
+  const relation = data.relation == null ? null : String(data.relation);
+  if (relation != null && !RELATIONS.includes(relation)) {
+    throw new HttpsError("invalid-argument", "Hubungan keluarga tidak valid.");
+  }
 
   const userRef = db.doc(`users/${uid}`);
   const existing = await userRef.get();
@@ -361,8 +374,18 @@ export const submitRegistration = onCall(async (req) => {
   const estate = db.doc(`estates/${estateId}`);
   const house = await estate.collection("houses").doc(houseId).get();
   if (!house.exists) throw new HttpsError("not-found", "Rumah tidak ditemukan.");
-  const taken = await unavailableHouses(estateId, uid);
-  if (taken.has(houseId)) {
+  const status = await houseStatus(estateId, uid);
+  const householdId = status.occupied.get(houseId) ?? null;
+  if (relation != null) {
+    // Gabung ke rumah berpenghuni sebagai anggota rumah.
+    if (householdId == null) {
+      throw new HttpsError("failed-precondition", "Rumah ini masih kosong. Daftar sebagai warga baru.");
+    }
+    const count = await estate.collection("members").where("residentId", "==", householdId).count().get();
+    if (count.data().count >= MAX_MEMBERS) {
+      throw new HttpsError("resource-exhausted", "Anggota rumah ini sudah penuh.");
+    }
+  } else if (householdId != null || status.pending.has(houseId)) {
     throw new HttpsError("already-exists", "Rumah ini sudah berpenghuni atau sedang diajukan orang lain.");
   }
   const [block, cluster] = await Promise.all([
@@ -381,6 +404,9 @@ export const submitRegistration = onCall(async (req) => {
     clusterName: cluster.get("name") ?? "",
     occupancy,
     docUrl,
+    kind: relation != null ? "gabung" : "baru",
+    relation,
+    residentId: relation != null ? householdId : null,
     status: "menunggu",
     note: "",
     createdAt: FieldValue.serverTimestamp(),
@@ -391,24 +417,66 @@ export const submitRegistration = onCall(async (req) => {
   return { ok: true };
 });
 
-/** Pengelola menyetujui pendaftaran: buat data warga & jadikan akun warga. */
+/**
+ * Menyetujui pendaftaran.
+ *  - Warga baru: oleh pengelola; membuat data warga di rumah kosong.
+ *  - Gabung: oleh pengelola atau kepala keluarga rumah tujuan; membuat akun
+ *    anggota rumah.
+ */
 export const approveRegistration = onCall(async (req) => {
   const me = await profileOf(req.auth?.uid);
   const data = req.data ?? {};
   const estateId = requireText(data.estateId, "estateId");
   const uid = requireText(data.uid, "uid");
-  if (!managesEstate(me, estateId)) {
-    throw new HttpsError("permission-denied", "Hanya pengelola perumahan ini yang bisa menyetujui.");
-  }
   const estate = db.doc(`estates/${estateId}`);
   const regRef = estate.collection("registrations").doc(uid);
-  const residentRef = estate.collection("residents").doc();
 
+  const first = await regRef.get();
+  if (!first.exists) throw new HttpsError("not-found", "Pendaftaran tidak ditemukan.");
+  const isJoin = first.get("kind") === "gabung";
+  const householdId = String(first.get("residentId") ?? "");
+  const allowed = isJoin
+    ? canManageHousehold(me, estateId, householdId)
+    : managesEstate(me, estateId);
+  if (!allowed) {
+    throw new HttpsError("permission-denied", "Anda tidak berhak menyetujui pendaftaran ini.");
+  }
+
+  const residentRef = estate.collection("residents").doc();
   await db.runTransaction(async (tx) => {
     const reg = await tx.get(regRef);
-    if (!reg.exists || reg.get("status") !== "menunggu") {
-      throw new HttpsError("failed-precondition", "Pendaftaran tidak ditemukan atau sudah diproses.");
+    if (reg.get("status") !== "menunggu") {
+      throw new HttpsError("failed-precondition", "Pendaftaran sudah diproses.");
     }
+    if (isJoin) {
+      const household = await tx.get(estate.collection("residents").doc(householdId));
+      if (!household.exists) throw new HttpsError("not-found", "Data rumah tidak ditemukan.");
+      const current = await tx.get(estate.collection("members").where("residentId", "==", householdId));
+      if (current.size >= MAX_MEMBERS) {
+        throw new HttpsError("resource-exhausted", "Anggota rumah sudah penuh.");
+      }
+      tx.set(estate.collection("members").doc(uid), {
+        residentId: householdId,
+        name: reg.get("name"),
+        relation: reg.get("relation") ?? "lainnya",
+        phone: reg.get("phone"),
+        email: reg.get("email"),
+        addedBy: req.auth!.uid,
+        createdAt: FieldValue.serverTimestamp(),
+      });
+      tx.set(db.doc(`users/${uid}`), {
+        estateId,
+        role: "warga",
+        residentId: householdId,
+        name: reg.get("name"),
+        householdRole: "anggota",
+        relation: reg.get("relation") ?? "lainnya",
+        mustChangePassword: false,
+      });
+      tx.update(regRef, { status: "disetujui", reviewedAt: FieldValue.serverTimestamp() });
+      return;
+    }
+
     const houseId = String(reg.get("houseId"));
     const occupied = await tx.get(
       estate.collection("residents").where("houseId", "==", houseId).limit(1),
@@ -439,7 +507,7 @@ export const approveRegistration = onCall(async (req) => {
       reviewedAt: FieldValue.serverTimestamp(),
     });
   });
-  return { residentId: residentRef.id };
+  return { ok: true };
 });
 
 // ---------------------------------------------------------------------------

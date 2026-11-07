@@ -273,6 +273,16 @@ class EstateStore extends ChangeNotifier {
     _bind(_est.collection('houses'), houses, House.fromMap);
     _bind(_est.collection('houseTypes'), houseTypes, HouseType.fromMap);
     _bind(scoped('members'), members, HouseholdMember.fromMap);
+    if (!isAdmin && currentUser!.isPrimary) {
+      // Kepala keluarga: permintaan gabung ke rumahnya.
+      _bind(
+          _est
+              .collection('registrations')
+              .where('kind', isEqualTo: RegistrationKind.gabung.name)
+              .where('residentId', isEqualTo: rid),
+          registrations,
+          Registration.fromMap);
+    }
     _bind(scoped('bills'), bills, Bill.fromMap);
     _bind(scoped('renovations'), renovations, Renovation.fromMap);
     _bind(scoped('renovationLogs'), renovationLogs, RenovationLog.fromMap);
@@ -1022,8 +1032,12 @@ class EstateStore extends ChangeNotifier {
       final occupied = {
         for (final r in rs)
           if (r.houseId != null) r.houseId!,
+      };
+      // Rumah kosong yang sedang diajukan pendaftar lain (bukan "gabung").
+      final pending = {
         for (final g in regs)
           if (g.status == RegistrationStatus.menunggu &&
+              !g.isJoin &&
               g.id != _demoRegistrantId)
             g.houseId,
       };
@@ -1034,8 +1048,9 @@ class EstateStore extends ChangeNotifier {
         houses: List.of(hs),
         available: {
           for (final h in hs)
-            if (!occupied.contains(h.id)) h.id,
+            if (!occupied.contains(h.id) && !pending.contains(h.id)) h.id,
         },
+        occupied: occupied,
       );
     }
     final res = await _fn!
@@ -1059,6 +1074,7 @@ class EstateStore extends ChangeNotifier {
     String? email,
     String? password,
     XFile? document,
+    MemberRelation? relation,
   }) async {
     final resubmit = currentUser?.role == Role.pendaftar;
     if (!resubmit) {
@@ -1082,6 +1098,7 @@ class EstateStore extends ChangeNotifier {
         email: resubmit ? currentUser!.email! : email!.toLowerCase(),
         document: document,
         resubmit: resubmit,
+        relation: relation,
       );
       return;
     }
@@ -1124,6 +1141,7 @@ class EstateStore extends ChangeNotifier {
       'phone': phone.trim(),
       'occupancy': occupancy.name,
       'docUrl': docUrl,
+      'relation': relation?.name,
     });
     await _loadProfile(uid);
   }
@@ -1137,6 +1155,7 @@ class EstateStore extends ChangeNotifier {
     required String email,
     required bool resubmit,
     XFile? document,
+    MemberRelation? relation,
   }) {
     final active = estateId == _estateId;
     final d = active ? null : _demoEstates[estateId];
@@ -1153,12 +1172,30 @@ class EstateStore extends ChangeNotifier {
     }
     final h = hs.where((h) => h.id == houseId).firstOrNull;
     if (h == null) throw StateError('Rumah tidak ditemukan.');
-    final taken = rs.any((r) => r.houseId == houseId) ||
-        regs.any((g) =>
-            g.houseId == houseId &&
-            g.status == RegistrationStatus.menunggu &&
-            g.id != _demoRegistrantId);
-    if (taken) throw StateError('Rumah ini sudah berpenghuni atau sedang diajukan.');
+    final occupant = rs.where((r) => r.houseId == houseId).firstOrNull;
+    final join = relation != null;
+    if (join) {
+      // Gabung ke rumah yang sudah berpenghuni sebagai anggota rumah.
+      if (occupant == null) {
+        throw StateError('Rumah ini masih kosong. Daftar sebagai warga baru.');
+      }
+      final ms = active ? members : d!.members;
+      if (ms.where((m) => m.residentId == occupant.id).length >=
+          maxHouseholdMembers) {
+        throw StateError('Anggota rumah ini sudah penuh '
+            '($maxHouseholdMembers orang).');
+      }
+    } else {
+      final taken = occupant != null ||
+          regs.any((g) =>
+              g.houseId == houseId &&
+              g.status == RegistrationStatus.menunggu &&
+              !g.isJoin &&
+              g.id != _demoRegistrantId);
+      if (taken) {
+        throw StateError('Rumah ini sudah berpenghuni atau sedang diajukan.');
+      }
+    }
     final label =
         '${bs.where((b) => b.id == h.blockId).firstOrNull?.name ?? '?'}/${h.number}';
     final clusterName =
@@ -1179,6 +1216,9 @@ class EstateStore extends ChangeNotifier {
         occupancy: occupancy,
         docUrl: document?.path,
         createdAt: DateTime.now(),
+        kind: join ? RegistrationKind.gabung : RegistrationKind.baru,
+        relation: relation,
+        residentId: occupant?.id,
       );
       regs.add(reg);
     } else {
@@ -1193,7 +1233,10 @@ class EstateStore extends ChangeNotifier {
         ..status = RegistrationStatus.menunggu
         ..note = ''
         ..createdAt = DateTime.now()
-        ..reviewedAt = null;
+        ..reviewedAt = null
+        ..kind = join ? RegistrationKind.gabung : RegistrationKind.baru
+        ..relation = relation
+        ..residentId = join ? occupant!.id : null;
     }
     _demoRegistrantId = reg.id;
     myRegistration = reg;
@@ -1204,17 +1247,57 @@ class EstateStore extends ChangeNotifier {
   Registration? registrationById(String id) =>
       registrations.where((r) => r.id == id).firstOrNull;
 
+  /// Pengelola: semua pendaftaran menunggu. Kepala keluarga: permintaan
+  /// gabung ke rumahnya.
   List<Registration> get pendingRegistrations => registrations
-      .where((r) => r.status == RegistrationStatus.menunggu)
+      .where((r) =>
+          r.status == RegistrationStatus.menunggu && canReviewRegistration(r))
       .toList()
     ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
 
+  /// Permintaan gabung ke rumah tertentu yang masih menunggu.
+  List<Registration> joinRequestsFor(String residentId) => registrations
+      .where((r) =>
+          r.isJoin &&
+          r.residentId == residentId &&
+          r.status == RegistrationStatus.menunggu)
+      .toList();
+
+  /// Pengelola memproses semua pendaftaran; kepala keluarga hanya permintaan
+  /// gabung ke rumahnya sendiri.
+  bool canReviewRegistration(Registration r) =>
+      isAdmin ||
+      (r.isJoin && r.residentId != null && canManageMembers(r.residentId!));
+
   /// Pengelola menyetujui: akun pendaftar menjadi warga di rumah pilihannya.
   Future<void> approveRegistration(String id) async {
-    _requireAdmin();
     final reg = registrationById(id);
     if (reg == null || reg.status != RegistrationStatus.menunggu) {
       throw StateError('Pendaftaran tidak ditemukan atau sudah diproses.');
+    }
+    if (!canReviewRegistration(reg)) {
+      throw StateError('Anda tidak berhak memproses pendaftaran ini.');
+    }
+    if (!isFirebase && reg.isJoin) {
+      final household = residentById(reg.residentId!);
+      if (household == null) throw StateError('Data rumah tidak ditemukan.');
+      if (membersOf(household.id).length >= maxHouseholdMembers) {
+        throw StateError('Anggota rumah sudah penuh ($maxHouseholdMembers orang).');
+      }
+      members.add(HouseholdMember(
+        id: reg.id,
+        residentId: household.id,
+        name: reg.name,
+        relation: reg.relation ?? MemberRelation.lainnya,
+        phone: reg.phone,
+        email: reg.email,
+        createdAt: DateTime.now(),
+      ));
+      reg
+        ..status = RegistrationStatus.disetujui
+        ..reviewedAt = DateTime.now();
+      notifyListeners();
+      return;
     }
     if (!isFirebase) {
       final h = houseById(reg.houseId);
@@ -1244,10 +1327,12 @@ class EstateStore extends ChangeNotifier {
   }
 
   Future<void> rejectRegistration(String id, String reason) async {
-    _requireAdmin();
     final reg = registrationById(id);
     if (reg == null || reg.status != RegistrationStatus.menunggu) {
       throw StateError('Pendaftaran tidak ditemukan atau sudah diproses.');
+    }
+    if (!canReviewRegistration(reg)) {
+      throw StateError('Anda tidak berhak memproses pendaftaran ini.');
     }
     if (reason.trim().isEmpty) throw StateError('Isi alasan penolakan.');
     if (!isFirebase) {
@@ -2174,6 +2259,23 @@ class EstateStore extends ChangeNotifier {
       clusterName: clusterById(h.clusterId)?.name ?? '',
       occupancy: Occupancy.penyewa,
       createdAt: DateTime.now().subtract(const Duration(hours: 5)),
+    ));
+    // Permintaan gabung ke rumah Budi Santoso (A1/05) sebagai anak.
+    final budi = residentById('R1')!;
+    registrations.add(Registration(
+      id: 'REG-JOIN',
+      estateId: _estateId!,
+      name: 'Dimas Santoso',
+      phone: '0857-1111-2233',
+      email: 'dimas.s@contoh.id',
+      houseId: budi.houseId!,
+      houseNo: budi.houseNo,
+      clusterName: clusterById(houseById(budi.houseId!)!.clusterId)?.name ?? '',
+      occupancy: Occupancy.keluarga,
+      createdAt: DateTime.now().subtract(const Duration(hours: 2)),
+      kind: RegistrationKind.gabung,
+      relation: MemberRelation.anak,
+      residentId: budi.id,
     ));
   }
 

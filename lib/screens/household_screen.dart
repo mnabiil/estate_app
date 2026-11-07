@@ -4,6 +4,7 @@ import '../models.dart';
 import '../store.dart';
 import '../theme.dart';
 import '../widgets.dart';
+import 'registrations_screen.dart';
 
 /// Anggota rumah (keluarga / penyewa) yang punya akun sendiri dan berbagi
 /// data rumah yang sama. Kepala keluarga & pengelola bisa menambah/menghapus.
@@ -146,6 +147,29 @@ class HouseholdScreen extends StatelessWidget {
                         : null,
                   ),
                 ),
+              if (canManage && store.joinRequestsFor(residentId).isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Text('Permintaan bergabung',
+                    style: theme.textTheme.labelLarge
+                        ?.copyWith(color: theme.colorScheme.primary)),
+                const SizedBox(height: 4),
+                for (final req in store.joinRequestsFor(residentId))
+                  Card(
+                    color: theme.colorScheme.secondaryContainer,
+                    child: ListTile(
+                      leading: const Icon(Icons.person_add_alt_1),
+                      title: Text(req.name),
+                      subtitle: Text(
+                          '${req.relation?.label ?? 'Anggota'} · ${req.phone} '
+                          '· mendaftar sendiri'),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () => Navigator.of(context).push(
+                          MaterialPageRoute(
+                              builder: (_) => RegistrationDetailScreen(
+                                  registrationId: req.id))),
+                    ),
+                  ),
+              ],
               const SizedBox(height: 8),
               Text('Anggota (${members.length}/$maxHouseholdMembers)',
                   style: theme.textTheme.labelLarge),

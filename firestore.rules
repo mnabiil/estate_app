@@ -202,10 +202,21 @@ service cloud.firestore {
 
       // Pendaftaran warga mandiri (ID dokumen = uid pendaftar). Dibuat &
       // disetujui lewat Cloud Function; pengelola boleh menolak langsung.
+      // Kepala keluarga juga boleh membaca & menolak permintaan "gabung"
+      // ke rumahnya (persetujuan tetap lewat Cloud Function).
       match /registrations/{uid} {
+        function headOfTargetHousehold() {
+          return inEstate(estateId)
+            && me().role == 'warga'
+            && me().get('householdRole', '') != 'anggota'
+            && resource.data.kind == 'gabung'
+            && resource.data.residentId == me().residentId;
+        }
+
         allow read: if isAdmin(estateId)
-          || (signedIn() && request.auth.uid == uid);
-        allow update: if isAdmin(estateId)
+          || (signedIn() && request.auth.uid == uid)
+          || headOfTargetHousehold();
+        allow update: if (isAdmin(estateId) || headOfTargetHousehold())
           && onlyChanges(['status', 'note', 'reviewedAt'])
           && resource.data.status == 'menunggu'
           && request.resource.data.status == 'ditolak'

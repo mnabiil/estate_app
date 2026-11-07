@@ -93,9 +93,10 @@ class _RegistrationCard extends StatelessWidget {
             child: Text(r.name.isEmpty ? '?' : r.name[0].toUpperCase())),
         title: Text(r.name),
         subtitle: Text([
-          'Rumah ${r.houseNo}',
+          r.isJoin
+              ? 'Gabung ke ${r.houseNo} · ${r.relation?.label ?? 'anggota'}'
+              : 'Warga baru · Rumah ${r.houseNo}',
           if (r.clusterName.isNotEmpty) r.clusterName,
-          r.occupancy.label,
           formatDate(r.createdAt),
         ].join(' · ')),
         trailing: StatusChip(r.status.label, _statusColor(r.status)),
@@ -174,6 +175,22 @@ class RegistrationDetailScreen extends StatelessWidget {
         final occupant = house == null ? null : store.residentOfHouse(house.id);
         final pending = r.status == RegistrationStatus.menunggu;
         final type = house == null ? null : store.houseTypeOf(house);
+        final canReview = store.canReviewRegistration(r);
+        final household =
+            r.isJoin ? store.residentById(r.residentId ?? '') : null;
+        // Masalah yang menghalangi persetujuan.
+        final String? blocker = r.isJoin
+            ? (household == null && store.isAdmin
+                ? 'Data rumah tujuan tidak ditemukan.'
+                : store.membersOf(r.residentId ?? '').length >=
+                        maxHouseholdMembers
+                    ? 'Anggota rumah sudah penuh ($maxHouseholdMembers orang).'
+                    : null)
+            : house == null
+                ? 'Rumah sudah tidak ada di master data.'
+                : occupant != null
+                    ? 'Rumah ini sudah ditempati ${occupant.name}.'
+                    : null;
 
         Widget row(IconData icon, String label, String value) => ListTile(
               leading: Icon(icon),
@@ -206,23 +223,28 @@ class RegistrationDetailScreen extends StatelessWidget {
                       if (r.clusterName.isNotEmpty) r.clusterName,
                       if (type != null) type.name,
                     ].join(' · ')),
-                    row(Icons.badge_outlined, 'Status hunian',
-                        r.occupancy.label),
+                    if (r.isJoin) ...[
+                      row(Icons.family_restroom, 'Jenis pendaftaran',
+                          'Gabung sebagai ${r.relation?.label ?? 'anggota'}'),
+                      if (household != null)
+                        row(Icons.star_outline, 'Kepala keluarga',
+                            household.name),
+                    ] else
+                      row(Icons.badge_outlined, 'Status hunian',
+                          'Warga baru · ${r.occupancy.label}'),
                     row(Icons.phone_outlined, 'No. HP', r.phone),
                     row(Icons.email_outlined, 'Email (akun login)', r.email),
                   ],
                 ),
               ),
-              if (pending && (house == null || occupant != null))
+              if (pending && blocker != null)
                 Card(
                   color: scheme.errorContainer,
                   child: ListTile(
                     leading: Icon(Icons.warning_amber_rounded,
                         color: scheme.onErrorContainer),
                     title: Text(
-                      house == null
-                          ? 'Rumah sudah tidak ada di master data.'
-                          : 'Rumah ini sudah ditempati ${occupant!.name}.',
+                      blocker,
                       style: TextStyle(color: scheme.onErrorContainer),
                     ),
                     subtitle: Text('Tolak dan minta pendaftar memilih ulang.',
@@ -245,23 +267,27 @@ class RegistrationDetailScreen extends StatelessWidget {
                 const SizedBox(height: 16),
                 row(Icons.sticky_note_2_outlined, 'Alasan penolakan', r.note),
               ],
-              if (pending) ...[
+              if (pending && canReview) ...[
                 const SizedBox(height: 24),
                 FilledButton.icon(
-                  onPressed: house == null || occupant != null
+                  onPressed: blocker != null
                       ? null
                       : () async {
                           final done = await runAction(
                             context,
                             store.approveRegistration(r.id).then((_) => true),
-                            success: '${r.name} kini terdaftar sebagai warga',
+                            success: r.isJoin
+                                ? '${r.name} kini anggota rumah ${r.houseNo}'
+                                : '${r.name} kini terdaftar sebagai warga',
                           );
                           if (done == true && context.mounted) {
                             Navigator.pop(context);
                           }
                         },
                   icon: const Icon(Icons.how_to_reg),
-                  label: const Text('Setujui & aktifkan akun'),
+                  label: Text(r.isJoin
+                      ? 'Setujui sebagai anggota rumah'
+                      : 'Setujui & aktifkan akun'),
                 ),
                 const SizedBox(height: 8),
                 OutlinedButton.icon(
