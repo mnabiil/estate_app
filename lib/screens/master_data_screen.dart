@@ -592,6 +592,15 @@ Future<void> editEstate(BuildContext context, {bool create = false}) async {
   final address =
       TextEditingController(text: create ? '' : store.estateAddress);
   final fee = TextEditingController(text: create ? '$monthlyFee' : '${store.fee}');
+  final depSmall = TextEditingController(
+      text: create ? '$defaultDepositSmall' : '${store.depositSmall}');
+  final depLarge = TextEditingController(
+      text: create ? '$defaultDepositLarge' : '${store.depositLarge}');
+  String? positive(String? v) {
+    final n = int.tryParse((v ?? '').replaceAll('.', ''));
+    return (n == null || n <= 0) ? 'Isi angka > 0' : null;
+  }
+
   final formKey = GlobalKey<FormState>();
 
   final ok = await showDialog<bool>(
@@ -631,10 +640,33 @@ Future<void> editEstate(BuildContext context, {bool create = false}) async {
                   labelText: 'Tarif IPL per bulan',
                   prefixText: 'Rp ',
                 ),
-                validator: (v) {
-                  final n = int.tryParse((v ?? '').replaceAll('.', ''));
-                  return (n == null || n <= 0) ? 'Isi angka > 0' : null;
-                },
+                validator: positive,
+              ),
+              const SizedBox(height: 16),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text('Deposit ijin renovasi',
+                    style: Theme.of(ctx).textTheme.labelLarge),
+              ),
+              const SizedBox(height: 8),
+              TextFormField(
+                controller: depSmall,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Renovasi kecil',
+                  prefixText: 'Rp ',
+                ),
+                validator: positive,
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: depLarge,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Renovasi besar',
+                  prefixText: 'Rp ',
+                ),
+                validator: positive,
               ),
             ],
           ),
@@ -657,11 +689,15 @@ Future<void> editEstate(BuildContext context, {bool create = false}) async {
   final n = name.text.trim();
   final a = address.text.trim();
   final f = int.parse(fee.text.replaceAll('.', ''));
+  final ds = int.parse(depSmall.text.replaceAll('.', ''));
+  final dl = int.parse(depLarge.text.replaceAll('.', ''));
   await runAction(
     context,
     create
-        ? store.createEstate(name: n, address: a, fee: f)
-        : store.updateEstate(name: n, address: a, fee: f),
+        ? store.createEstate(
+            name: n, address: a, fee: f, depositSmall: ds, depositLarge: dl)
+        : store.updateEstate(
+            name: n, address: a, fee: f, depositSmall: ds, depositLarge: dl),
     success: create ? '$n ditambahkan & aktif' : 'Profil perumahan disimpan',
   );
 }

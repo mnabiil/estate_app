@@ -79,6 +79,13 @@ export const createEstate = onCall(async (req) => {
   if (!Number.isInteger(fee) || fee <= 0) {
     throw new HttpsError("invalid-argument", "Tarif IPL harus angka bulat > 0.");
   }
+  const depositSmall = Number(data.renovationDepositSmall ?? 1000000);
+  const depositLarge = Number(data.renovationDepositLarge ?? 5000000);
+  for (const d of [depositSmall, depositLarge]) {
+    if (!Number.isInteger(d) || d <= 0) {
+      throw new HttpsError("invalid-argument", "Deposit renovasi harus angka bulat > 0.");
+    }
+  }
   const managed = Array.from(new Set([me.estateId, ...(me.estateIds ?? [])].filter(Boolean)));
   if (managed.length >= 20) {
     throw new HttpsError("resource-exhausted", "Maksimal 20 perumahan per akun.");
@@ -90,6 +97,8 @@ export const createEstate = onCall(async (req) => {
     name,
     address,
     monthlyFee: fee,
+    renovationDepositSmall: depositSmall,
+    renovationDepositLarge: depositLarge,
     createdBy: uid,
     createdAt: FieldValue.serverTimestamp(),
   });

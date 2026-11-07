@@ -14,6 +14,7 @@ Dua peran: **Warga** dan **Pengelola**. Data masih contoh (in-memory), belum ada
 | Keluhan | Buat (dengan foto, maks. 3) & pantau status | Lihat semua, ubah status (Baru/Diproses/Selesai) |
 | Tamu | Daftarkan tamu → dapat kode akses 6 digit | Log tamu, check-in |
 | Pengumuman | Baca | Buat pengumuman |
+| Ijin renovasi | Ajukan (kecil/besar, jangka waktu, kontraktor), catat barang masuk/keluar, batalkan | Terima deposit, setujui/tolak, perpanjang, tandai selesai, kembalikan deposit (bisa dipotong), catat barang masuk/keluar |
 | Data warga | — | Cari, tambah (pilih rumah dari daftar), lihat riwayat IPL |
 | Master data | — | Perumahan (bisa lebih dari satu) → Cluster → Tipe rumah (LB/LT) → Blok → No. rumah (tambah nomor sekaligus per rentang) |
 
@@ -95,7 +96,7 @@ Aplikasi otomatis memilih mode:
 
 ```
 users/{uid}                      { estateId, estateIds?, role, residentId?, name }
-estates/{estateId}               { name, address, monthlyFee }
+estates/{estateId}               { name, address, monthlyFee, renovationDepositSmall, renovationDepositLarge }
   clusters/{id}                  { name }
   blocks/{id}                    { clusterId, typeId, name }
   houseTypes/{id}                { clusterId, name, buildingArea, landArea }
@@ -105,6 +106,11 @@ estates/{estateId}               { name, address, monthlyFee }
   complaints/{id}                { residentId, title, description, category, status, photoUrls, createdAt }
   visitors/{id}                  { residentId, name, purpose, visitDate, code, checkedInAt }
   announcements/{id}             { title, body, createdAt }
+  renovations/{id}               { residentId, type: kecil|besar, description, contractor, contractorPhone,
+                                   startDate, endDate ("YYYY-MM-DD"), deposit, status, depositStatus,
+                                   depositPaidAt, depositRefund, depositRefundedAt, adminNote, createdAt }
+  renovationLogs/{id}            { renovationId, residentId, direction: masuk|keluar, item, quantity,
+                                   note, at, recordedBy }
 ```
 
 Foto keluhan di Firebase Storage: `estates/{estateId}/complaints/{residentId}/{complaintId}/{0-2}.jpg`.

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../store.dart';
 import 'announcements_screen.dart';
 import 'master_data_screen.dart';
+import 'renovations_screen.dart';
 import 'visitors_screen.dart';
 
 class AccountScreen extends StatelessWidget {
@@ -45,6 +46,12 @@ class AccountScreen extends StatelessWidget {
               title: const Text('No. HP'),
               subtitle: Text(resident.phone),
             ),
+          ListTile(
+            leading: const Icon(Icons.construction),
+            title: const Text('Ijin renovasi'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => push(const RenovationsScreen()),
+          ),
           ListTile(
             leading: const Icon(Icons.campaign_outlined),
             title: const Text('Pengumuman'),

@@ -349,3 +349,199 @@ class Announcement {
         createdAt: _date(m['createdAt']) ?? DateTime.now(),
       );
 }
+
+// ---------- Ijin renovasi ----------
+
+/// "2026-11-07" — tanggal tanpa jam (aman dari pergeseran zona waktu).
+String dayKey(DateTime d) =>
+    '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+
+DateTime parseDay(String s) {
+  final p = s.split('-').map(int.parse).toList();
+  return DateTime(p[0], p[1], p[2]);
+}
+
+DateTime dateOnly(DateTime d) => DateTime(d.year, d.month, d.day);
+
+enum RenovationType {
+  kecil(
+    'Renovasi kecil',
+    'Pengecatan, ganti keramik, perbaikan ringan tanpa mengubah struktur '
+        'dan tampak depan bangunan.',
+  ),
+  besar(
+    'Renovasi besar',
+    'Tambah ruang/lantai, ubah struktur, fasad, atau pagar; pekerjaan '
+        'berat dengan material dalam jumlah besar.',
+  );
+
+  const RenovationType(this.label, this.description);
+  final String label;
+  final String description;
+}
+
+enum RenovationStatus {
+  diajukan('Menunggu persetujuan'),
+  disetujui('Disetujui'),
+  ditolak('Ditolak'),
+  selesai('Selesai'),
+  dibatalkan('Dibatalkan');
+
+  const RenovationStatus(this.label);
+  final String label;
+}
+
+enum DepositStatus {
+  belumBayar('Belum dibayar'),
+  dibayar('Diterima pengelola'),
+  dikembalikan('Dikembalikan');
+
+  const DepositStatus(this.label);
+  final String label;
+}
+
+/// Tahap pekerjaan untuk renovasi yang sudah disetujui (dihitung dari tanggal).
+enum RenovationPhase { belumMulai, berjalan, terlambat }
+
+class Renovation {
+  Renovation({
+    required this.id,
+    required this.residentId,
+    required this.type,
+    required this.description,
+    required this.contractor,
+    required this.startDate,
+    required this.endDate,
+    required this.deposit,
+    required this.createdAt,
+    this.contractorPhone = '',
+    this.status = RenovationStatus.diajukan,
+    this.depositStatus = DepositStatus.belumBayar,
+    this.depositPaidAt,
+    this.depositRefund,
+    this.depositRefundedAt,
+    this.adminNote = '',
+  });
+
+  final String id;
+  final String residentId;
+  final RenovationType type;
+  final String description;
+
+  /// Nama kontraktor / mandor yang bekerja.
+  final String contractor;
+  final String contractorPhone;
+
+  /// Jangka waktu pekerjaan (tanggal saja, inklusif).
+  final DateTime startDate;
+  DateTime endDate;
+
+  /// Besar deposit sesuai jenis renovasi saat diajukan.
+  final int deposit;
+  final DateTime createdAt;
+
+  RenovationStatus status;
+  DepositStatus depositStatus;
+  DateTime? depositPaidAt;
+
+  /// Jumlah deposit yang dikembalikan (bisa dipotong bila ada pelanggaran).
+  int? depositRefund;
+  DateTime? depositRefundedAt;
+
+  /// Catatan pengelola (alasan tolak, potongan deposit, dll.).
+  String adminNote;
+
+  /// Lama pekerjaan dalam hari (inklusif).
+  int get durationDays => endDate.difference(startDate).inDays + 1;
+
+  /// Hanya bermakna bila status disetujui.
+  RenovationPhase phaseOn(DateTime today) {
+    final d = dateOnly(today);
+    if (d.isBefore(startDate)) return RenovationPhase.belumMulai;
+    if (d.isAfter(endDate)) return RenovationPhase.terlambat;
+    return RenovationPhase.berjalan;
+  }
+
+  /// Masih aktif (perlu dipantau): diajukan atau disetujui.
+  bool get isActive =>
+      status == RenovationStatus.diajukan ||
+      status == RenovationStatus.disetujui;
+
+  factory Renovation.fromMap(String id, Map<String, dynamic> m) => Renovation(
+        id: id,
+        residentId: m['residentId'] as String,
+        type: RenovationType.values.byName(m['type'] as String? ?? 'kecil'),
+        description: m['description'] as String? ?? '',
+        contractor: m['contractor'] as String? ?? '',
+        contractorPhone: m['contractorPhone'] as String? ?? '',
+        startDate: parseDay(m['startDate'] as String),
+        endDate: parseDay(m['endDate'] as String),
+        deposit: (m['deposit'] as num?)?.toInt() ?? 0,
+        createdAt: _date(m['createdAt']) ?? DateTime.now(),
+        status: RenovationStatus.values
+            .byName(m['status'] as String? ?? 'diajukan'),
+        depositStatus: DepositStatus.values
+            .byName(m['depositStatus'] as String? ?? 'belumBayar'),
+        depositPaidAt: _date(m['depositPaidAt']),
+        depositRefund: (m['depositRefund'] as num?)?.toInt(),
+        depositRefundedAt: _date(m['depositRefundedAt']),
+        adminNote: m['adminNote'] as String? ?? '',
+      );
+}
+
+enum LogDirection {
+  masuk('Masuk'),
+  keluar('Keluar');
+
+  const LogDirection(this.label);
+  final String label;
+}
+
+/// Catatan barang masuk / keluar selama renovasi.
+class RenovationLog {
+  RenovationLog({
+    required this.id,
+    required this.renovationId,
+    required this.residentId,
+    required this.direction,
+    required this.item,
+    required this.quantity,
+    required this.at,
+    required this.recordedBy,
+    this.note = '',
+  });
+
+  final String id;
+  final String renovationId;
+  final String residentId;
+  final LogDirection direction;
+
+  /// Nama barang, mis. "Semen".
+  final String item;
+
+  /// Jumlah + satuan, mis. "20 sak".
+  final String quantity;
+  final String note;
+  final DateTime at;
+
+  /// Nama pencatat (pengelola/satpam atau warga).
+  final String recordedBy;
+
+  factory RenovationLog.fromMap(String id, Map<String, dynamic> m) =>
+      RenovationLog(
+        id: id,
+        renovationId: m['renovationId'] as String,
+        residentId: m['residentId'] as String,
+        direction:
+            LogDirection.values.byName(m['direction'] as String? ?? 'masuk'),
+        item: m['item'] as String? ?? '',
+        quantity: m['quantity'] as String? ?? '',
+        note: m['note'] as String? ?? '',
+        at: _date(m['at']) ?? DateTime.now(),
+        recordedBy: m['recordedBy'] as String? ?? '',
+      );
+}
+
+/// Deposit default bila belum diatur di profil perumahan.
+const defaultDepositSmall = 1000000;
+const defaultDepositLarge = 5000000;

@@ -58,9 +58,15 @@ service cloud.firestore {
 
     match /estates/{estateId} {
       allow read: if inEstate(estateId);
-      // Master perumahan: pengelola boleh mengubah nama, alamat, dan tarif IPL.
+      // Master perumahan: pengelola boleh mengubah nama, alamat, tarif IPL,
+      // dan deposit ijin renovasi.
       allow update: if isAdmin(estateId)
-        && onlyChanges(['name', 'address', 'monthlyFee'])
+        && onlyChanges(['name', 'address', 'monthlyFee',
+          'renovationDepositSmall', 'renovationDepositLarge'])
+        && (request.resource.data.get('renovationDepositSmall', 1) is int
+          && request.resource.data.get('renovationDepositSmall', 1) > 0)
+        && (request.resource.data.get('renovationDepositLarge', 1) is int
+          && request.resource.data.get('renovationDepositLarge', 1) > 0)
         && validName(100)
         && (!('address' in request.resource.data)
           || (request.resource.data.address is string
@@ -172,6 +178,84 @@ service cloud.firestore {
           && onlyChanges(['checkedInAt'])
           && request.resource.data.checkedInAt == request.time;
         allow delete: if isAdmin(estateId) || ownsExisting(estateId);
+      }
+
+      // Ijin renovasi. Warga mengajukan; deposit wajib sesuai jenis renovasi
+      // (diatur di dokumen perumahan). Alur status diatur pengelola.
+      match /renovations/{renovationId} {
+        function estateDoc() {
+          return get(/databases/$(database)/documents/estates/$(estateId)).data;
+        }
+        function requiredDeposit(type) {
+          return type == 'besar'
+            ? estateDoc().get('renovationDepositLarge', 5000000)
+            : estateDoc().get('renovationDepositSmall', 1000000);
+        }
+
+        allow read: if isAdmin(estateId) || ownsExisting(estateId);
+        allow create: if ownsNew(estateId)
+          && request.resource.data.keys().hasOnly(['residentId', 'type',
+            'description', 'contractor', 'contractorPhone', 'startDate',
+            'endDate', 'deposit', 'status', 'depositStatus', 'adminNote',
+            'createdAt'])
+          && request.resource.data.type in ['kecil', 'besar']
+          && request.resource.data.deposit == requiredDeposit(request.resource.data.type)
+          && request.resource.data.status == 'diajukan'
+          && request.resource.data.depositStatus == 'belumBayar'
+          && request.resource.data.adminNote == ''
+          && request.resource.data.description is string
+          && request.resource.data.description.size() <= 1000
+          && request.resource.data.contractor is string
+          && request.resource.data.contractor.size() <= 100
+          // Tanggal "YYYY-MM-DD": bisa dibandingkan sebagai teks.
+          && request.resource.data.startDate.matches('[0-9]{4}-[0-9]{2}-[0-9]{2}')
+          && request.resource.data.endDate.matches('[0-9]{4}-[0-9]{2}-[0-9]{2}')
+          && request.resource.data.endDate >= request.resource.data.startDate
+          && request.resource.data.createdAt == request.time;
+        allow update: if
+          // Pengelola: proses ijin, deposit, perpanjangan, selesai.
+          (isAdmin(estateId)
+            && onlyChanges(['status', 'depositStatus', 'depositPaidAt',
+              'depositRefund', 'depositRefundedAt', 'adminNote', 'endDate'])
+            && request.resource.data.status in
+              ['diajukan', 'disetujui', 'ditolak', 'selesai', 'dibatalkan']
+            && request.resource.data.depositStatus in
+              ['belumBayar', 'dibayar', 'dikembalikan']
+            && request.resource.data.endDate >= resource.data.startDate
+            && request.resource.data.get('depositRefund', 0) <= resource.data.deposit)
+          // Warga: membatalkan pengajuan yang belum dibayar & belum diproses.
+          || (ownsExisting(estateId)
+            && onlyChanges(['status'])
+            && resource.data.status == 'diajukan'
+            && resource.data.depositStatus == 'belumBayar'
+            && request.resource.data.status == 'dibatalkan');
+        allow delete: if false;
+      }
+
+      // Catatan barang masuk/keluar selama renovasi (pengelola/satpam atau
+      // warga pemilik), hanya saat ijin berstatus disetujui.
+      match /renovationLogs/{logId} {
+        function renovation() {
+          return get(/databases/$(database)/documents/estates/$(estateId)/renovations/$(request.resource.data.renovationId)).data;
+        }
+
+        allow read: if isAdmin(estateId) || ownsExisting(estateId);
+        allow create: if inEstate(estateId)
+          && request.resource.data.keys().hasOnly(['renovationId', 'residentId',
+            'direction', 'item', 'quantity', 'note', 'at', 'recordedBy'])
+          && renovation().status == 'disetujui'
+          && renovation().residentId == request.resource.data.residentId
+          && (isAdmin(estateId) || request.resource.data.residentId == me().residentId)
+          && request.resource.data.direction in ['masuk', 'keluar']
+          && request.resource.data.item is string
+          && request.resource.data.item.size() > 0
+          && request.resource.data.item.size() <= 100
+          && request.resource.data.quantity is string
+          && request.resource.data.quantity.size() <= 40
+          && request.resource.data.note.size() <= 200
+          && request.resource.data.at == request.time;
+        allow update: if false;
+        allow delete: if isAdmin(estateId);
       }
 
       match /announcements/{announcementId} {

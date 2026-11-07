@@ -6,6 +6,7 @@ import '../theme.dart';
 import '../utils.dart';
 import 'announcements_screen.dart';
 import 'master_data_screen.dart';
+import 'renovations_screen.dart';
 import 'visitors_screen.dart';
 
 /// Indeks tab di HomeShell.
@@ -166,6 +167,10 @@ class DashboardScreen extends StatelessWidget {
                       Expanded(child: _StatCard(rest[i])),
                     ],
                   ],
+                ),
+                const SizedBox(height: 16),
+                _RenovationShortcut(
+                  onTap: () => _push(context, const RenovationsScreen()),
                 ),
                 const SizedBox(height: 28),
                 Row(
@@ -367,6 +372,65 @@ class _StatCard extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// Pintasan ke ijin renovasi dengan ringkasan status.
+class _RenovationShortcut extends StatelessWidget {
+  const _RenovationShortcut({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final rid = store.currentUser?.residentId;
+    final mine = store.renovations
+        .where((r) => store.isAdmin || r.residentId == rid)
+        .where((r) => r.isActive)
+        .toList();
+    final now = DateTime.now();
+    final waiting =
+        mine.where((r) => r.status == RenovationStatus.diajukan).length;
+    final running = mine
+        .where((r) =>
+            r.status == RenovationStatus.disetujui &&
+            r.phaseOn(now) != RenovationPhase.terlambat)
+        .length;
+    final late = mine
+        .where((r) =>
+            r.status == RenovationStatus.disetujui &&
+            r.phaseOn(now) == RenovationPhase.terlambat)
+        .length;
+    final summary = [
+      if (running > 0) '$running berjalan',
+      if (waiting > 0) '$waiting menunggu',
+      if (late > 0) '$late lewat batas waktu',
+    ];
+    return Card(
+      margin: EdgeInsets.zero,
+      child: ListTile(
+        leading: Container(
+          width: 44,
+          height: 44,
+          decoration: BoxDecoration(
+            color: scheme.surface,
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: Icon(Icons.construction, color: scheme.primary),
+        ),
+        title: const Text('Ijin renovasi'),
+        subtitle: Text(summary.isEmpty
+            ? (store.isAdmin
+                ? 'Tidak ada renovasi aktif'
+                : 'Ajukan ijin sebelum renovasi rumah')
+            : summary.join(' · ')),
+        trailing: late > 0
+            ? Icon(Icons.warning_amber_rounded, color: scheme.error)
+            : const Icon(Icons.chevron_right),
+        onTap: onTap,
       ),
     );
   }

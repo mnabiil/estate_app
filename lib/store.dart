@@ -9,6 +9,7 @@ import 'package:flutter/foundation.dart';
 import 'package:image_picker/image_picker.dart';
 
 import 'models.dart';
+import 'utils.dart';
 
 /// Satu-satunya sumber data aplikasi.
 ///
@@ -29,6 +30,7 @@ String get estateName => store.estateName;
 class EstateStore extends ChangeNotifier {
   EstateStore() {
     _seedDemo();
+    _seedDemoRenovations();
     _seedSecondDemoEstate();
   }
 
@@ -38,6 +40,8 @@ class EstateStore extends ChangeNotifier {
   final List<Complaint> complaints = [];
   final List<Visitor> visitors = [];
   final List<Announcement> announcements = [];
+  final List<Renovation> renovations = [];
+  final List<RenovationLog> renovationLogs = [];
 
   // Master perumahan.
   final List<Cluster> clusters = [];
@@ -48,6 +52,13 @@ class EstateStore extends ChangeNotifier {
   String estateName = 'Perumahan Griya Asri';
   String estateAddress = 'Jl. Raya Griya Asri No. 1, Bekasi';
   int fee = monthlyFee;
+
+  /// Deposit ijin renovasi per jenis, diatur di profil perumahan.
+  int depositSmall = defaultDepositSmall;
+  int depositLarge = defaultDepositLarge;
+
+  int depositFor(RenovationType t) =>
+      t == RenovationType.besar ? depositLarge : depositSmall;
 
   final _random = Random();
   int _seq = 1000;
@@ -154,6 +165,10 @@ class EstateStore extends ChangeNotifier {
       estateName = d['name'] as String? ?? 'Perumahan';
       estateAddress = d['address'] as String? ?? '';
       fee = (d['monthlyFee'] as num?)?.toInt() ?? monthlyFee;
+      depositSmall = (d['renovationDepositSmall'] as num?)?.toInt() ??
+          defaultDepositSmall;
+      depositLarge = (d['renovationDepositLarge'] as num?)?.toInt() ??
+          defaultDepositLarge;
       notifyListeners();
     }, onError: _onStreamError));
 
@@ -172,6 +187,8 @@ class EstateStore extends ChangeNotifier {
     _bind(_est.collection('houses'), houses, House.fromMap);
     _bind(_est.collection('houseTypes'), houseTypes, HouseType.fromMap);
     _bind(scoped('bills'), bills, Bill.fromMap);
+    _bind(scoped('renovations'), renovations, Renovation.fromMap);
+    _bind(scoped('renovationLogs'), renovationLogs, RenovationLog.fromMap);
     _bind(scoped('complaints'), complaints, Complaint.fromMap);
     _bind(scoped('visitors'), visitors, Visitor.fromMap);
     _bind(
@@ -212,6 +229,8 @@ class EstateStore extends ChangeNotifier {
     blocks.clear();
     houses.clear();
     houseTypes.clear();
+    renovations.clear();
+    renovationLogs.clear();
     bills.clear();
     complaints.clear();
     visitors.clear();
@@ -311,6 +330,272 @@ class EstateStore extends ChangeNotifier {
       'email': email,
     });
     return res.data['tempPassword'] as String?;
+  }
+
+  // ---------- Ijin renovasi ----------
+
+  Renovation? renovationById(String id) {
+    for (final r in renovations) {
+      if (r.id == id) return r;
+    }
+    return null;
+  }
+
+  /// Log barang sebuah renovasi, terbaru di atas.
+  List<RenovationLog> logsOf(String renovationId) =>
+      renovationLogs.where((l) => l.renovationId == renovationId).toList()
+        ..sort((a, b) => b.at.compareTo(a.at));
+
+  Renovation _renovation(String id) {
+    final r = renovationById(id);
+    if (r == null) throw StateError('Ijin renovasi tidak ditemukan.');
+    return r;
+  }
+
+  void _requireAdmin() {
+    if (!isAdmin) throw StateError('Hanya pengelola yang bisa melakukan ini.');
+  }
+
+  DocumentReference<Map<String, dynamic>> _renDoc(String id) =>
+      _est.collection('renovations').doc(id);
+
+  /// Warga mengajukan ijin renovasi. Deposit mengikuti jenis renovasi.
+  Future<void> submitRenovation({
+    required RenovationType type,
+    required String description,
+    required String contractor,
+    String contractorPhone = '',
+    required DateTime start,
+    required DateTime end,
+  }) async {
+    final rid = currentUser?.residentId;
+    if (rid == null) throw StateError('Hanya warga yang bisa mengajukan.');
+    final s = dateOnly(start), e = dateOnly(end);
+    if (e.isBefore(s)) {
+      throw StateError('Tanggal selesai harus setelah tanggal mulai.');
+    }
+    if (s.isBefore(dateOnly(DateTime.now()))) {
+      throw StateError('Tanggal mulai tidak boleh di masa lalu.');
+    }
+    if (renovations.any((r) => r.residentId == rid && r.isActive)) {
+      throw StateError('Masih ada ijin renovasi yang aktif untuk rumah ini.');
+    }
+    final deposit = depositFor(type);
+    if (!isFirebase) {
+      renovations.add(Renovation(
+        id: _newId('RV'),
+        residentId: rid,
+        type: type,
+        description: description,
+        contractor: contractor,
+        contractorPhone: contractorPhone,
+        startDate: s,
+        endDate: e,
+        deposit: deposit,
+        createdAt: DateTime.now(),
+      ));
+      notifyListeners();
+      return;
+    }
+    await _est.collection('renovations').add({
+      'residentId': rid,
+      'type': type.name,
+      'description': description,
+      'contractor': contractor,
+      'contractorPhone': contractorPhone,
+      'startDate': dayKey(s),
+      'endDate': dayKey(e),
+      'deposit': deposit,
+      'status': RenovationStatus.diajukan.name,
+      'depositStatus': DepositStatus.belumBayar.name,
+      'adminNote': '',
+      'createdAt': FieldValue.serverTimestamp(),
+    });
+  }
+
+  /// Warga membatalkan pengajuan yang belum diproses.
+  Future<void> cancelRenovation(String id) async {
+    final r = _renovation(id);
+    if (r.status != RenovationStatus.diajukan) {
+      throw StateError('Hanya pengajuan yang belum diproses yang bisa dibatalkan.');
+    }
+    if (r.depositStatus == DepositStatus.dibayar) {
+      throw StateError(
+          'Deposit sudah diterima. Hubungi pengelola untuk membatalkan.');
+    }
+    await _updateRenovation(r, {'status': RenovationStatus.dibatalkan.name},
+        () => r.status = RenovationStatus.dibatalkan);
+  }
+
+  /// Pengelola mencatat deposit sudah diterima.
+  Future<void> markDepositPaid(String id) async {
+    _requireAdmin();
+    final r = _renovation(id);
+    if (r.depositStatus != DepositStatus.belumBayar ||
+        r.status != RenovationStatus.diajukan) {
+      throw StateError('Deposit tidak bisa dicatat pada status ini.');
+    }
+    final now = DateTime.now();
+    await _updateRenovation(r, {
+      'depositStatus': DepositStatus.dibayar.name,
+      'depositPaidAt': FieldValue.serverTimestamp(),
+    }, () {
+      r
+        ..depositStatus = DepositStatus.dibayar
+        ..depositPaidAt = now;
+    });
+  }
+
+  /// Menyetujui ijin. Deposit wajib sudah diterima.
+  Future<void> approveRenovation(String id, {String note = ''}) async {
+    _requireAdmin();
+    final r = _renovation(id);
+    if (r.status != RenovationStatus.diajukan) {
+      throw StateError('Ijin ini sudah diproses.');
+    }
+    if (r.depositStatus != DepositStatus.dibayar) {
+      throw StateError('Deposit ${formatRupiah(r.deposit)} belum diterima.');
+    }
+    await _updateRenovation(r, {
+      'status': RenovationStatus.disetujui.name,
+      'adminNote': note,
+    }, () {
+      r
+        ..status = RenovationStatus.disetujui
+        ..adminNote = note;
+    });
+  }
+
+  Future<void> rejectRenovation(String id, String reason) async {
+    _requireAdmin();
+    final r = _renovation(id);
+    if (r.status != RenovationStatus.diajukan) {
+      throw StateError('Ijin ini sudah diproses.');
+    }
+    await _updateRenovation(r, {
+      'status': RenovationStatus.ditolak.name,
+      'adminNote': reason,
+    }, () {
+      r
+        ..status = RenovationStatus.ditolak
+        ..adminNote = reason;
+    });
+  }
+
+  /// Memperpanjang jangka waktu pekerjaan.
+  Future<void> extendRenovation(String id, DateTime newEnd) async {
+    _requireAdmin();
+    final r = _renovation(id);
+    if (r.status != RenovationStatus.disetujui) {
+      throw StateError('Hanya renovasi yang disetujui yang bisa diperpanjang.');
+    }
+    final e = dateOnly(newEnd);
+    if (!e.isAfter(r.endDate)) {
+      throw StateError('Tanggal baru harus setelah ${formatDate(r.endDate)}.');
+    }
+    await _updateRenovation(
+        r, {'endDate': dayKey(e)}, () => r.endDate = e);
+  }
+
+  Future<void> completeRenovation(String id, {String note = ''}) async {
+    _requireAdmin();
+    final r = _renovation(id);
+    if (r.status != RenovationStatus.disetujui) {
+      throw StateError('Hanya renovasi yang disetujui yang bisa diselesaikan.');
+    }
+    final newNote = note.isEmpty ? r.adminNote : note;
+    await _updateRenovation(r, {
+      'status': RenovationStatus.selesai.name,
+      'adminNote': newNote,
+    }, () {
+      r
+        ..status = RenovationStatus.selesai
+        ..adminNote = newNote;
+    });
+  }
+
+  /// Mengembalikan deposit (penuh atau dipotong) setelah renovasi selesai,
+  /// ditolak, atau dibatalkan.
+  Future<void> refundDeposit(String id, int amount, {String note = ''}) async {
+    _requireAdmin();
+    final r = _renovation(id);
+    if (r.depositStatus != DepositStatus.dibayar) {
+      throw StateError('Deposit belum diterima atau sudah dikembalikan.');
+    }
+    if (r.status == RenovationStatus.diajukan ||
+        r.status == RenovationStatus.disetujui) {
+      throw StateError('Selesaikan atau tolak renovasi dulu.');
+    }
+    if (amount < 0 || amount > r.deposit) {
+      throw StateError('Jumlah pengembalian harus 0 – ${formatRupiah(r.deposit)}.');
+    }
+    final newNote = note.isEmpty ? r.adminNote : note;
+    final now = DateTime.now();
+    await _updateRenovation(r, {
+      'depositStatus': DepositStatus.dikembalikan.name,
+      'depositRefund': amount,
+      'depositRefundedAt': FieldValue.serverTimestamp(),
+      'adminNote': newNote,
+    }, () {
+      r
+        ..depositStatus = DepositStatus.dikembalikan
+        ..depositRefund = amount
+        ..depositRefundedAt = now
+        ..adminNote = newNote;
+    });
+  }
+
+  Future<void> _updateRenovation(
+      Renovation r, Map<String, Object?> data, void Function() local) async {
+    if (!isFirebase) {
+      local();
+      notifyListeners();
+      return;
+    }
+    await _renDoc(r.id).update(data);
+  }
+
+  /// Mencatat barang masuk/keluar. Hanya selama renovasi disetujui.
+  Future<void> addRenovationLog(
+    String renovationId, {
+    required LogDirection direction,
+    required String item,
+    required String quantity,
+    String note = '',
+  }) async {
+    final r = _renovation(renovationId);
+    if (r.status != RenovationStatus.disetujui) {
+      throw StateError('Barang hanya bisa dicatat selama renovasi berjalan.');
+    }
+    if (!isAdmin && currentUser?.residentId != r.residentId) {
+      throw StateError('Ini bukan renovasi rumah Anda.');
+    }
+    final by = currentUser?.name ?? '';
+    if (!isFirebase) {
+      renovationLogs.add(RenovationLog(
+        id: _newId('LG'),
+        renovationId: r.id,
+        residentId: r.residentId,
+        direction: direction,
+        item: item,
+        quantity: quantity,
+        note: note,
+        at: DateTime.now(),
+        recordedBy: by,
+      ));
+      notifyListeners();
+      return;
+    }
+    await _est.collection('renovationLogs').add({
+      'renovationId': r.id,
+      'residentId': r.residentId,
+      'direction': direction.name,
+      'item': item,
+      'quantity': quantity,
+      'note': note,
+      'at': FieldValue.serverTimestamp(),
+      'recordedBy': by,
+    });
   }
 
   // ---------- Atur rumah warga (termasuk warga lama) ----------
@@ -437,20 +722,29 @@ class EstateStore extends ChangeNotifier {
   }
 
   /// Pengelola membuat perumahan baru lalu langsung pindah ke sana.
-  Future<void> createEstate(
-      {required String name, required String address, required int fee}) async {
+  Future<void> createEstate({
+    required String name,
+    required String address,
+    required int fee,
+    int depositSmall = defaultDepositSmall,
+    int depositLarge = defaultDepositLarge,
+  }) async {
     _checkName(name, estates.map((e) => e.name), 'Perumahan');
     String id;
     if (!isFirebase) {
       id = _newId('E');
       estates.add(EstateInfo(id: id, name: name));
-      _demoEstates[id] = _DemoEstate.empty(name, address: address, fee: fee);
+      _demoEstates[id] = _DemoEstate.empty(name, address: address, fee: fee)
+        ..depositSmall = depositSmall
+        ..depositLarge = depositLarge;
     } else {
       final res =
           await _fn!.httpsCallable('createEstate').call<Map<String, dynamic>>({
         'name': name,
         'address': address,
         'monthlyFee': fee,
+        'renovationDepositSmall': depositSmall,
+        'renovationDepositLarge': depositLarge,
       });
       id = res.data['estateId'] as String;
       estates.add(EstateInfo(id: id, name: name));
@@ -531,8 +825,18 @@ class EstateStore extends ChangeNotifier {
     return null;
   }
 
-  Future<void> updateEstate(
-      {required String name, required String address, required int fee}) async {
+  Future<void> updateEstate({
+    required String name,
+    required String address,
+    required int fee,
+    int? depositSmall,
+    int? depositLarge,
+  }) async {
+    final small = depositSmall ?? this.depositSmall;
+    final large = depositLarge ?? this.depositLarge;
+    if (small <= 0 || large <= 0) {
+      throw StateError('Deposit renovasi harus lebih dari 0.');
+    }
     _checkName(
         name,
         estates.where((e) => e.id != _estateId).map((e) => e.name),
@@ -541,13 +845,21 @@ class EstateStore extends ChangeNotifier {
       estateName = name;
       estateAddress = address;
       this.fee = fee;
+      this.depositSmall = small;
+      this.depositLarge = large;
       for (final e in estates) {
         if (e.id == _estateId) e.name = name;
       }
       notifyListeners();
       return;
     }
-    await _est.update({'name': name, 'address': address, 'monthlyFee': fee});
+    await _est.update({
+      'name': name,
+      'address': address,
+      'monthlyFee': fee,
+      'renovationDepositSmall': small,
+      'renovationDepositLarge': large,
+    });
   }
 
   void _checkName(String name, Iterable<String> existing, String what) {
@@ -912,6 +1224,60 @@ class EstateStore extends ChangeNotifier {
 
   // ---------- Data contoh (mode demo) ----------
 
+  /// Contoh ijin renovasi: satu berjalan (dengan log barang), satu menunggu.
+  void _seedDemoRenovations() {
+    final today = dateOnly(DateTime.now());
+    final running = Renovation(
+      id: _newId('RV'),
+      residentId: 'R1',
+      type: RenovationType.kecil,
+      description: 'Ganti keramik dapur dan cat ulang ruang tamu.',
+      contractor: 'Pak Slamet',
+      contractorPhone: '0812-7777-1212',
+      startDate: today.subtract(const Duration(days: 5)),
+      endDate: today.add(const Duration(days: 9)),
+      deposit: depositSmall,
+      createdAt: today.subtract(const Duration(days: 8)),
+      status: RenovationStatus.disetujui,
+      depositStatus: DepositStatus.dibayar,
+      depositPaidAt: today.subtract(const Duration(days: 7)),
+    );
+    renovations.add(running);
+    const logs = [
+      (5, LogDirection.masuk, 'Keramik 40x40', '12 dus', 'Pick up B 1234 XY'),
+      (5, LogDirection.masuk, 'Semen instan', '10 sak', ''),
+      (3, LogDirection.keluar, 'Puing bongkaran keramik', '6 karung', 'Dibuang ke TPS'),
+      (1, LogDirection.masuk, 'Cat tembok 20 L', '2 pail', ''),
+    ];
+    for (final (daysAgo, dir, item, qty, note) in logs) {
+      renovationLogs.add(RenovationLog(
+        id: _newId('LG'),
+        renovationId: running.id,
+        residentId: 'R1',
+        direction: dir,
+        item: item,
+        quantity: qty,
+        note: note,
+        at: today
+            .subtract(Duration(days: daysAgo))
+            .add(const Duration(hours: 9, minutes: 30)),
+        recordedBy: 'Pak Hendra',
+      ));
+    }
+    renovations.add(Renovation(
+      id: _newId('RV'),
+      residentId: 'R4',
+      type: RenovationType.besar,
+      description: 'Tambah kamar di lantai 2 dan ubah fasad depan.',
+      contractor: 'CV Bangun Jaya',
+      contractorPhone: '021-555-8899',
+      startDate: today.add(const Duration(days: 7)),
+      endDate: today.add(const Duration(days: 96)),
+      deposit: depositLarge,
+      createdAt: today.subtract(const Duration(days: 1)),
+    ));
+  }
+
   /// Perumahan contoh kedua milik pengelola yang sama: master data saja.
   void _seedSecondDemoEstate() {
     final d = _DemoEstate(
@@ -1176,11 +1542,19 @@ class _DemoEstate {
         ..clusters.addAll(s.clusters)
         ..blocks.addAll(s.blocks)
         ..houses.addAll(s.houses)
-        ..houseTypes.addAll(s.houseTypes);
+        ..houseTypes.addAll(s.houseTypes)
+        ..renovations.addAll(s.renovations)
+        ..renovationLogs.addAll(s.renovationLogs)
+        ..depositSmall = s.depositSmall
+        ..depositLarge = s.depositLarge;
 
   final String name;
   final String address;
   final int fee;
+  int depositSmall = defaultDepositSmall;
+  int depositLarge = defaultDepositLarge;
+  final renovations = <Renovation>[];
+  final renovationLogs = <RenovationLog>[];
   final residents = <Resident>[];
   final bills = <Bill>[];
   final complaints = <Complaint>[];
@@ -1204,5 +1578,9 @@ class _DemoEstate {
     s.blocks.addAll(blocks);
     s.houses.addAll(houses);
     s.houseTypes.addAll(houseTypes);
+    s.renovations.addAll(renovations);
+    s.renovationLogs.addAll(renovationLogs);
+    s.depositSmall = depositSmall;
+    s.depositLarge = depositLarge;
   }
 }
