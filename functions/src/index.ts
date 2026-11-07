@@ -7,6 +7,8 @@
  *                                    daftar perumahan & rumah tersedia untuk pendaftaran
  *  - submitRegistration  (callable)  calon warga mengirim pendaftaran mandiri
  *  - approveRegistration (callable)  pengelola menyetujui pendaftaran -> akun jadi warga
+ *  - addHouseholdMember / removeHouseholdMember (callable)
+ *                                    akun anggota rumah (keluarga/penyewa)
  *  - payBill             (callable)  warga membayar tagihan (SIMULASI, lihat catatan)
  *  - generateMonthlyBills (terjadwal) membuat tagihan IPL tiap tanggal 1, 01.00 WIB
  *
@@ -33,6 +35,8 @@ type Profile = {
   role: "warga" | "pengelola" | "pendaftar";
   residentId?: string;
   name: string;
+  /** "anggota" untuk anggota rumah; kepala keluarga tidak punya field ini. */
+  householdRole?: "anggota";
 };
 
 async function profileOf(uid: string | undefined): Promise<Profile> {
@@ -436,4 +440,108 @@ export const approveRegistration = onCall(async (req) => {
     });
   });
   return { residentId: residentRef.id };
+});
+
+// ---------------------------------------------------------------------------
+// Anggota rumah (keluarga / penyewa)
+// ---------------------------------------------------------------------------
+
+const RELATIONS = ["pasangan", "anak", "orangTua", "saudara", "penyewa", "lainnya"];
+const MAX_MEMBERS = 6;
+
+/** Pengelola perumahan, atau kepala keluarga rumah tersebut. */
+function canManageHousehold(me: Profile, estateId: string, residentId: string): boolean {
+  if (managesEstate(me, estateId)) return true;
+  return (
+    me.role === "warga" &&
+    me.estateId === estateId &&
+    me.residentId === residentId &&
+    me.householdRole !== "anggota"
+  );
+}
+
+export const addHouseholdMember = onCall(async (req) => {
+  const me = await profileOf(req.auth?.uid);
+  const data = req.data ?? {};
+  const estateId = requireText(data.estateId, "estateId");
+  const residentId = requireText(data.residentId, "residentId");
+  if (!canManageHousehold(me, estateId, residentId)) {
+    throw new HttpsError("permission-denied", "Hanya kepala keluarga atau pengelola yang bisa menambah anggota.");
+  }
+  const name = requireText(data.name, "Nama", 100);
+  const email = requireText(data.email, "Email", 120).toLowerCase();
+  const phone = typeof data.phone === "string" ? data.phone.trim().slice(0, 20) : "";
+  const relation = String(data.relation ?? "");
+  if (!RELATIONS.includes(relation)) {
+    throw new HttpsError("invalid-argument", "Hubungan keluarga tidak valid.");
+  }
+
+  const estate = db.doc(`estates/${estateId}`);
+  const resident = await estate.collection("residents").doc(residentId).get();
+  if (!resident.exists) throw new HttpsError("not-found", "Data rumah tidak ditemukan.");
+  const count = await estate.collection("members").where("residentId", "==", residentId).count().get();
+  if (count.data().count >= MAX_MEMBERS) {
+    throw new HttpsError("resource-exhausted", `Maksimal ${MAX_MEMBERS} anggota per rumah.`);
+  }
+
+  const tempPassword = randomBytes(9).toString("base64url");
+  let uid: string;
+  try {
+    const user = await getAuth().createUser({ email, password: tempPassword, displayName: name });
+    uid = user.uid;
+  } catch (e: unknown) {
+    const code = (e as { code?: string }).code;
+    if (code === "auth/email-already-exists") {
+      throw new HttpsError("already-exists", "Email ini sudah dipakai akun lain.");
+    }
+    if (code === "auth/invalid-email") {
+      throw new HttpsError("invalid-argument", "Format email tidak valid.");
+    }
+    throw e;
+  }
+
+  const batch = db.batch();
+  batch.set(estate.collection("members").doc(uid), {
+    residentId,
+    name,
+    relation,
+    phone,
+    email,
+    addedBy: req.auth!.uid,
+    createdAt: FieldValue.serverTimestamp(),
+  });
+  batch.set(db.doc(`users/${uid}`), {
+    estateId,
+    role: "warga",
+    residentId,
+    name,
+    householdRole: "anggota",
+    relation,
+    mustChangePassword: true,
+  });
+  await batch.commit();
+  return { uid, tempPassword };
+});
+
+export const removeHouseholdMember = onCall(async (req) => {
+  const me = await profileOf(req.auth?.uid);
+  const data = req.data ?? {};
+  const estateId = requireText(data.estateId, "estateId");
+  const uid = requireText(data.uid, "uid");
+  const ref = db.doc(`estates/${estateId}/members/${uid}`);
+  const member = await ref.get();
+  if (!member.exists) throw new HttpsError("not-found", "Anggota tidak ditemukan.");
+  if (!canManageHousehold(me, estateId, String(member.get("residentId")))) {
+    throw new HttpsError("permission-denied", "Hanya kepala keluarga atau pengelola yang bisa menghapus anggota.");
+  }
+  const batch = db.batch();
+  batch.delete(ref);
+  batch.delete(db.doc(`users/${uid}`));
+  await batch.commit();
+  try {
+    await getAuth().deleteUser(uid);
+  } catch (e: unknown) {
+    if ((e as { code?: string }).code !== "auth/user-not-found") throw e;
+  }
+  return { ok: true };
 });

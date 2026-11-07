@@ -16,7 +16,7 @@ Dua peran: **Warga** dan **Pengelola**. Data masih contoh (in-memory), belum ada
 | Pengumuman | Baca | Buat pengumuman |
 | Ijin renovasi | Ajukan (kecil/besar, detail, jangka waktu, lampiran file); setelah disetujui bayar deposit + bukti; catat barang masuk/keluar dengan foto | Tinjau & setujui/tolak, verifikasi deposit (atau terima tunai), perpanjang, tandai selesai, kembalikan deposit (bisa dipotong), catat barang dengan foto |
 | Data warga | — | Cari, tambah (pilih rumah dari daftar), lihat riwayat IPL |
-| Akun | Daftar sendiri (menunggu verifikasi), ganti password | Verifikasi pendaftaran warga (setujui/tolak), ganti password |
+| Akun | Daftar sendiri (menunggu verifikasi), ganti password; kepala keluarga menambah akun anggota rumah (keluarga/penyewa) | Verifikasi pendaftaran warga (setujui/tolak), kelola anggota rumah setiap warga, ganti password |
 | Master data | — | Perumahan (bisa lebih dari satu) → Cluster → Tipe rumah (LB/LT) → Blok → No. rumah (tambah nomor sekaligus per rentang); **import/ekspor Excel** |
 
 ## Tampilan
@@ -50,6 +50,12 @@ profil perumahan. Cloud Functions: `listRegistrationEstates`, `getRegistrationOp
 (tanpa login), `submitRegistration`, `approveRegistration`.
 
 Semua pengguna bisa **ganti password** di menu Akun.
+
+**Anggota rumah**: kepala keluarga (atau pengelola) menambah akun untuk pasangan, anak, orang
+tua, saudara, atau penyewa (maks. 6) lewat Akun → *Anggota rumah*. Anggota login dengan akunnya
+sendiri (password sementara, wajib diganti) dan berbagi data rumah yang sama karena memakai
+`residentId` yang sama; hanya kepala keluarga & pengelola yang bisa menambah/menghapus anggota.
+Cloud Functions: `addHouseholdMember`, `removeHouseholdMember` (menghapus akun login juga).
 
 ## Import dari Excel
 
@@ -127,8 +133,10 @@ Aplikasi otomatis memilih mode:
 ### Struktur data Firestore
 
 ```
-users/{uid}                      { estateId, estateIds?, role: warga|pengelola|pendaftar, residentId?, name, mustChangePassword? }
+users/{uid}                      { estateId, estateIds?, role: warga|pengelola|pendaftar, residentId?, name,
+                                   mustChangePassword?, householdRole?: anggota, relation? }
 estates/{estateId}               { name, address, monthlyFee, renovationDepositSmall, renovationDepositLarge }
+  members/{uid}                  { residentId, name, relation, phone, email, addedBy, createdAt }
   registrations/{uid}            { estateId, name, phone, email, houseId, houseNo, clusterName, occupancy,
                                    docUrl, status: menunggu|disetujui|ditolak, note, createdAt, reviewedAt }
   clusters/{id}                  { name }

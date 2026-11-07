@@ -17,6 +17,9 @@ class _LoginScreenState extends State<LoginScreen> {
   Role _role = Role.warga;
   String _residentId = 'R1';
 
+  /// Demo: masuk sebagai anggota rumah (bukan kepala keluarga).
+  String? _memberId;
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -166,16 +169,36 @@ class _LoginScreenState extends State<LoginScreen> {
             child: ListView(
               shrinkWrap: true,
               children: [
-              for (final r in store.residents)
+              for (final r in store.residents) ...[
                 ListTile(
                   title: Text(r.name),
                   subtitle: Text('Rumah ${r.houseNo}'),
-                  selected: r.id == _residentId,
-                  trailing: r.id == _residentId
+                  selected: r.id == _residentId && _memberId == null,
+                  trailing: r.id == _residentId && _memberId == null
                       ? const Icon(Icons.check_circle)
                       : null,
-                  onTap: () => setState(() => _residentId = r.id),
+                  onTap: () => setState(() {
+                    _residentId = r.id;
+                    _memberId = null;
+                  }),
                 ),
+                for (final m in store.membersOf(r.id))
+                  ListTile(
+                    contentPadding: const EdgeInsets.only(left: 40, right: 20),
+                    leading: const Icon(Icons.subdirectory_arrow_right),
+                    title: Text(m.name),
+                    subtitle:
+                        Text('${m.relation.label} · Rumah ${r.houseNo}'),
+                    selected: m.id == _memberId,
+                    trailing: m.id == _memberId
+                        ? const Icon(Icons.check_circle)
+                        : null,
+                    onTap: () => setState(() {
+                      _residentId = r.id;
+                      _memberId = m.id;
+                    }),
+                  ),
+              ],
               ],
             ),
           ),
@@ -190,7 +213,9 @@ class _LoginScreenState extends State<LoginScreen> {
         ),
       const SizedBox(height: 24),
       FilledButton(
-        onPressed: () => store.login(_role, residentId: _residentId),
+        onPressed: () => store.login(_role,
+            residentId: _residentId,
+            memberId: _role == Role.warga ? _memberId : null),
         child: const Text('Masuk'),
       ),
       const SizedBox(height: 12),

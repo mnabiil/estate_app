@@ -2,7 +2,10 @@ rules_version = '2';
 
 // Aturan akses Nilaya Living.
 // - Profil login ada di /users/{uid}:
-//     { estateId, estateIds?, role: 'warga'|'pengelola', residentId?, name }
+//     { estateId, estateIds?, role: 'warga'|'pengelola'|'pendaftar', residentId?,
+//       name, householdRole?: 'anggota', relation? }
+//   Kepala keluarga & anggota rumah berbagi residentId yang sama, sehingga
+//   aturan "data milik rumah ini" berlaku untuk semuanya.
 //   Pengelola bisa mengelola beberapa perumahan lewat estateIds (estateId =
 //   perumahan utama). Warga hanya terikat ke satu estateId.
 //   Profil HANYA dibuat lewat Cloud Function / Console, tidak bisa ditulis dari aplikasi.
@@ -188,6 +191,13 @@ service cloud.firestore {
           && onlyChanges(['checkedInAt'])
           && request.resource.data.checkedInAt == request.time;
         allow delete: if isAdmin(estateId) || ownsExisting(estateId);
+      }
+
+      // Anggota rumah (keluarga/penyewa), ID = uid akun anggota. Dibuat &
+      // dihapus lewat Cloud Function; satu rumah saling bisa melihat.
+      match /members/{uid} {
+        allow read: if isAdmin(estateId) || ownsExisting(estateId);
+        allow write: if false;
       }
 
       // Pendaftaran warga mandiri (ID dokumen = uid pendaftar). Dibuat &

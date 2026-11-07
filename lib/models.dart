@@ -11,12 +11,23 @@ class AppUser {
     this.residentId,
     this.mustChangePassword = false,
     this.email,
+    this.isPrimary = true,
+    this.relation,
   });
 
   final String name;
   final Role role;
+
+  /// Rumah tangga (data warga) yang diakses; sama untuk kepala keluarga dan
+  /// semua anggota rumah.
   final String? residentId;
   final String? email;
+
+  /// Kepala keluarga (akun utama rumah). Anggota rumah: false.
+  final bool isPrimary;
+
+  /// Hubungan anggota dengan kepala keluarga (null untuk kepala keluarga).
+  final MemberRelation? relation;
 
   /// Akun dibuat pengelola dengan password sementara: wajib diganti saat
   /// login pertama.
@@ -27,6 +38,8 @@ class AppUser {
         role: role,
         residentId: residentId,
         email: email,
+        isPrimary: isPrimary,
+        relation: relation,
         mustChangePassword: mustChangePassword ?? this.mustChangePassword,
       );
 }
@@ -804,4 +817,55 @@ class RegistrationOptions {
       },
     );
   }
+}
+
+
+// ---------- Anggota rumah (keluarga / penyewa) ----------
+
+enum MemberRelation {
+  pasangan('Suami / Istri'),
+  anak('Anak'),
+  orangTua('Orang tua'),
+  saudara('Saudara'),
+  penyewa('Penyewa'),
+  lainnya('Lainnya (ART, dll.)');
+
+  const MemberRelation(this.label);
+  final String label;
+}
+
+/// Maksimal anggota (di luar kepala keluarga) per rumah.
+const maxHouseholdMembers = 6;
+
+/// Akun tambahan yang berbagi data satu rumah. ID = uid akun anggota.
+class HouseholdMember {
+  HouseholdMember({
+    required this.id,
+    required this.residentId,
+    required this.name,
+    required this.relation,
+    required this.createdAt,
+    this.phone = '',
+    this.email = '',
+  });
+
+  final String id;
+  final String residentId;
+  final String name;
+  final MemberRelation relation;
+  final String phone;
+  final String email;
+  final DateTime createdAt;
+
+  factory HouseholdMember.fromMap(String id, Map<String, dynamic> m) =>
+      HouseholdMember(
+        id: id,
+        residentId: m['residentId'] as String? ?? '',
+        name: m['name'] as String? ?? '',
+        relation: MemberRelation.values
+            .byName(m['relation'] as String? ?? 'lainnya'),
+        phone: m['phone'] as String? ?? '',
+        email: m['email'] as String? ?? '',
+        createdAt: _date(m['createdAt']) ?? DateTime.now(),
+      );
 }

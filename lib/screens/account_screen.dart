@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../store.dart';
 import 'announcements_screen.dart';
+import 'household_screen.dart';
 import 'master_data_screen.dart';
 import 'password_screen.dart';
 import 'registrations_screen.dart';
@@ -37,7 +38,10 @@ class AccountScreen extends StatelessWidget {
             child: Text(
               store.isAdmin
                   ? 'Pengelola · $estateName'
-                  : 'Warga · Rumah ${resident?.houseNo}',
+                  : user.isPrimary
+                      ? 'Kepala keluarga · Rumah ${resident?.houseNo}'
+                      : 'Anggota rumah · ${user.relation?.label ?? ''} · '
+                          'Rumah ${resident?.houseNo}',
               style: theme.textTheme.bodyMedium,
             ),
           ),
@@ -47,6 +51,18 @@ class AccountScreen extends StatelessWidget {
               leading: const Icon(Icons.phone_outlined),
               title: const Text('No. HP'),
               subtitle: Text(resident.phone),
+            ),
+          if (!store.isAdmin && user.residentId != null)
+            ListTile(
+              leading: const Icon(Icons.family_restroom),
+              title: const Text('Anggota rumah'),
+              subtitle: Text(user.isPrimary
+                  ? 'Tambah akun keluarga atau penyewa'
+                  : '${store.membersOf(user.residentId!).length + 1} orang '
+                      'di rumah ini'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () =>
+                  push(HouseholdScreen(residentId: user.residentId!)),
             ),
           ListTile(
             leading: const Icon(Icons.construction),

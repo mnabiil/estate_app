@@ -33,6 +33,16 @@ class EstateStore extends ChangeNotifier {
     _seedDemo();
     _seedDemoRenovations();
     _seedDemoRegistration();
+    // Anggota rumah contoh: istri Budi Santoso (A1/05).
+    members.add(HouseholdMember(
+      id: 'M-ANI',
+      residentId: 'R1',
+      name: 'Ani Santoso',
+      relation: MemberRelation.pasangan,
+      phone: '0812-3456-7000',
+      email: 'ani@contoh.id',
+      createdAt: DateTime.now().subtract(const Duration(days: 30)),
+    ));
     _seedSecondDemoEstate();
   }
 
@@ -43,6 +53,9 @@ class EstateStore extends ChangeNotifier {
   final List<Visitor> visitors = [];
   final List<Announcement> announcements = [];
   final List<Renovation> renovations = [];
+
+  /// Anggota rumah (keluarga/penyewa). Pengelola: semua; warga: rumahnya.
+  final List<HouseholdMember> members = [];
 
   /// Pengelola: pendaftaran warga mandiri di perumahan aktif.
   final List<Registration> registrations = [];
@@ -150,12 +163,15 @@ class EstateStore extends ChangeNotifier {
       throw StateError('Akun ini belum terhubung ke perumahan mana pun.');
     }
     _estateId = ids.first;
+    final relation = d['relation'] as String?;
     currentUser = AppUser(
       name: d['name'] as String? ?? '',
       role: role,
       residentId: d['residentId'] as String?,
       email: email,
       mustChangePassword: d['mustChangePassword'] == true,
+      isPrimary: d['householdRole'] != 'anggota',
+      relation: relation == null ? null : MemberRelation.values.byName(relation),
     );
     estates
       ..clear()
@@ -256,6 +272,7 @@ class EstateStore extends ChangeNotifier {
     _bind(_est.collection('blocks'), blocks, HouseBlock.fromMap);
     _bind(_est.collection('houses'), houses, House.fromMap);
     _bind(_est.collection('houseTypes'), houseTypes, HouseType.fromMap);
+    _bind(scoped('members'), members, HouseholdMember.fromMap);
     _bind(scoped('bills'), bills, Bill.fromMap);
     _bind(scoped('renovations'), renovations, Renovation.fromMap);
     _bind(scoped('renovationLogs'), renovationLogs, RenovationLog.fromMap);
@@ -302,6 +319,7 @@ class EstateStore extends ChangeNotifier {
     renovations.clear();
     renovationLogs.clear();
     registrations.clear();
+    members.clear();
     bills.clear();
     complaints.clear();
     visitors.clear();
@@ -317,13 +335,24 @@ class EstateStore extends ChangeNotifier {
     return id == null ? null : residentById(id);
   }
 
-  /// Login mode demo.
-  void login(Role role, {String? residentId}) {
+  /// Login mode demo. [memberId]: masuk sebagai anggota rumah.
+  void login(Role role, {String? residentId, String? memberId}) {
     if (role == Role.pengelola) {
       currentUser = const AppUser(name: 'Pak Hendra', role: Role.pengelola);
+    } else if (memberId != null) {
+      final m = memberById(memberId)!;
+      currentUser = AppUser(
+        name: m.name,
+        role: Role.warga,
+        residentId: m.residentId,
+        email: m.email,
+        isPrimary: false,
+        relation: m.relation,
+      );
     } else {
       final r = residentById(residentId!)!;
-      currentUser = AppUser(name: r.name, role: Role.warga, residentId: r.id);
+      currentUser = AppUser(
+          name: r.name, role: Role.warga, residentId: r.id, email: r.email);
     }
     notifyListeners();
   }
@@ -810,6 +839,93 @@ class EstateStore extends ChangeNotifier {
       'photoUrls': urls,
       'at': FieldValue.serverTimestamp(),
       'recordedBy': by,
+    });
+  }
+
+  // ---------- Anggota rumah ----------
+
+  HouseholdMember? memberById(String id) =>
+      members.where((m) => m.id == id).firstOrNull;
+
+  List<HouseholdMember> membersOf(String residentId) =>
+      members.where((m) => m.residentId == residentId).toList()
+        ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+
+  /// Pengelola, atau kepala keluarga rumah tersebut.
+  bool canManageMembers(String residentId) =>
+      isAdmin ||
+      (currentUser?.role == Role.warga &&
+          currentUser!.isPrimary &&
+          currentUser!.residentId == residentId);
+
+  /// Menambah anggota rumah dengan akun login sendiri. Mode Firebase:
+  /// mengembalikan password sementara (wajib diganti saat login pertama).
+  Future<String?> addMember({
+    required String residentId,
+    required String name,
+    required MemberRelation relation,
+    required String phone,
+    required String email,
+  }) async {
+    if (!canManageMembers(residentId)) {
+      throw StateError('Hanya kepala keluarga atau pengelola yang bisa '
+          'menambah anggota rumah.');
+    }
+    if (name.trim().isEmpty) throw StateError('Nama wajib diisi.');
+    final mail = email.trim().toLowerCase();
+    if (isFirebase && !RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(mail)) {
+      throw StateError('Email tidak valid.');
+    }
+    if (membersOf(residentId).length >= maxHouseholdMembers) {
+      throw StateError('Maksimal $maxHouseholdMembers anggota per rumah.');
+    }
+    if (!isFirebase) {
+      if (mail.isNotEmpty &&
+          (members.any((m) => m.email == mail) ||
+              residents.any((r) => (r.email ?? '').toLowerCase() == mail))) {
+        throw StateError('Email sudah dipakai akun lain.');
+      }
+      members.add(HouseholdMember(
+        id: _newId('M'),
+        residentId: residentId,
+        name: name.trim(),
+        relation: relation,
+        phone: phone.trim(),
+        email: mail,
+        createdAt: DateTime.now(),
+      ));
+      notifyListeners();
+      return null;
+    }
+    final res = await _fn!
+        .httpsCallable('addHouseholdMember')
+        .call<Map<String, dynamic>>({
+      'estateId': _estateId,
+      'residentId': residentId,
+      'name': name.trim(),
+      'relation': relation.name,
+      'phone': phone.trim(),
+      'email': mail,
+    });
+    return res.data['tempPassword'] as String?;
+  }
+
+  /// Menghapus anggota rumah beserta akun loginnya.
+  Future<void> removeMember(String memberId) async {
+    final m = memberById(memberId);
+    if (m == null) throw StateError('Anggota tidak ditemukan.');
+    if (!canManageMembers(m.residentId)) {
+      throw StateError('Hanya kepala keluarga atau pengelola yang bisa '
+          'menghapus anggota rumah.');
+    }
+    if (!isFirebase) {
+      members.remove(m);
+      notifyListeners();
+      return;
+    }
+    await _fn!.httpsCallable('removeHouseholdMember').call<void>({
+      'estateId': _estateId,
+      'uid': memberId,
     });
   }
 
@@ -2331,7 +2447,8 @@ class _DemoEstate {
         ..depositSmall = s.depositSmall
         ..depositLarge = s.depositLarge
         ..registrationOpen = s.registrationOpen
-        ..registrations.addAll(s.registrations);
+        ..registrations.addAll(s.registrations)
+        ..members.addAll(s.members);
 
   final String name;
   final String address;
@@ -2340,6 +2457,7 @@ class _DemoEstate {
   int depositLarge = defaultDepositLarge;
   bool registrationOpen = true;
   final registrations = <Registration>[];
+  final members = <HouseholdMember>[];
   final renovations = <Renovation>[];
   final renovationLogs = <RenovationLog>[];
   final residents = <Resident>[];
@@ -2371,5 +2489,6 @@ class _DemoEstate {
     s.depositLarge = depositLarge;
     s.registrationOpen = registrationOpen;
     s.registrations.addAll(registrations);
+    s.members.addAll(members);
   }
 }

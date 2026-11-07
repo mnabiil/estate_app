@@ -5,6 +5,7 @@ import '../store.dart';
 import '../utils.dart';
 import '../widgets.dart';
 import 'house_picker.dart';
+import 'household_screen.dart';
 import 'registrations_screen.dart';
 
 class ResidentsScreen extends StatefulWidget {
@@ -283,6 +284,19 @@ class _ResidentsScreenState extends State<ResidentsScreen> {
                       icon: const Icon(Icons.add_home_outlined),
                       label: const Text('Atur rumah dari master data'),
                     ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: OutlinedButton.icon(
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  Navigator.of(context).push(MaterialPageRoute(
+                      builder: (_) => HouseholdScreen(residentId: r.id)));
+                },
+                icon: const Icon(Icons.family_restroom),
+                label: Text(
+                    'Anggota rumah (${store.membersOf(r.id).length})'),
+              ),
             ),
             const Divider(),
             Padding(
