@@ -352,15 +352,8 @@ class Announcement {
 
 // ---------- Ijin renovasi ----------
 
-/// "2026-11-07" — tanggal tanpa jam (aman dari pergeseran zona waktu).
-String dayKey(DateTime d) =>
-    '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
-
-DateTime parseDay(String s) {
-  final p = s.split('-').map(int.parse).toList();
-  return DateTime(p[0], p[1], p[2]);
-}
-
+/// Tanggal tanpa jam. Tanggal renovasi disimpan sebagai "YYYY-MM-DD"
+/// lewat [dayKey] / [parseKey].
 DateTime dateOnly(DateTime d) => DateTime(d.year, d.month, d.day);
 
 enum RenovationType {
@@ -474,8 +467,8 @@ class Renovation {
         description: m['description'] as String? ?? '',
         contractor: m['contractor'] as String? ?? '',
         contractorPhone: m['contractorPhone'] as String? ?? '',
-        startDate: parseDay(m['startDate'] as String),
-        endDate: parseDay(m['endDate'] as String),
+        startDate: parseKey(m['startDate'] as String),
+        endDate: parseKey(m['endDate'] as String),
         deposit: (m['deposit'] as num?)?.toInt() ?? 0,
         createdAt: _date(m['createdAt']) ?? DateTime.now(),
         status: RenovationStatus.values
