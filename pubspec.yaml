@@ -1,5 +1,5 @@
 name: estate_app
-description: Griya Kita - aplikasi manajemen perumahan (prototipe) untuk Android & iOS.
+description: Nilaya Living - aplikasi manajemen perumahan (prototipe) untuk Android & iOS.
 publish_to: 'none'
 version: 0.1.0+1
 
@@ -14,6 +14,12 @@ dependencies:
   firebase_auth: ^7.0.1
   cloud_firestore: ^7.1.0
   cloud_functions: ^7.0.1
+  firebase_messaging: ^17.0.1
+  firebase_storage: ^14.0.1
+  image_picker: ^1.1.2
+  file_picker: ^13.3.2
+  url_launcher: ^6.3.2
+  excel: ^4.0.6
 
 dev_dependencies:
   flutter_test:
@@ -22,3 +28,26 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+
+  assets:
+    - assets/images/
+
+  # Font dari Google Fonts (SIL Open Font License, lihat assets/fonts/OFL-*.txt).
+  fonts:
+    - family: Lato
+      fonts:
+        - asset: assets/fonts/Lato_400Regular.ttf
+        - asset: assets/fonts/Lato_700Bold.ttf
+          weight: 700
+        - asset: assets/fonts/Lato_900Black.ttf
+          weight: 900
+    - family: Raleway
+      fonts:
+        - asset: assets/fonts/Raleway_500Medium.ttf
+          weight: 500
+        - asset: assets/fonts/Raleway_600SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/Raleway_700Bold.ttf
+          weight: 700
+        - asset: assets/fonts/Raleway_800ExtraBold.ttf
+          weight: 800

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
+import '../push.dart';
 import '../store.dart';
+import 'announcements_screen.dart';
 import 'account_screen.dart';
 import 'bills_screen.dart';
 import 'complaints_screen.dart';
@@ -29,6 +31,35 @@ class _HomeShellState extends State<HomeShell> {
   void _goTo(int i) => setState(() => _index = i);
 
   @override
+  void initState() {
+    super.initState();
+    PushService.instance.target.addListener(_onPushTarget);
+    // Aplikasi dibuka dari notifikasi sebelum layar ini tampil.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _onPushTarget());
+  }
+
+  @override
+  void dispose() {
+    PushService.instance.target.removeListener(_onPushTarget);
+    super.dispose();
+  }
+
+  /// Notifikasi diketuk: buka tab Tagihan atau halaman Pengumuman.
+  void _onPushTarget() {
+    final t = PushService.instance.target.value;
+    if (t == null || !mounted) return;
+    PushService.instance.target.value = null;
+    switch (t) {
+      case PushTarget.bills:
+        Navigator.of(context).popUntil((r) => r.isFirst);
+        _goTo(1);
+      case PushTarget.announcements:
+        Navigator.of(context).push(MaterialPageRoute(
+            builder: (_) => const AnnouncementsScreen()));
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     final tabs = <_Tab>[
       _Tab('Beranda', Icons.home_outlined, Icons.home,
@@ -50,17 +81,25 @@ class _HomeShellState extends State<HomeShell> {
         index: _index,
         children: [for (final t in tabs) t.page],
       ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _index,
-        onDestinationSelected: _goTo,
-        destinations: [
-          for (final t in tabs)
-            NavigationDestination(
-              icon: Icon(t.icon),
-              selectedIcon: Icon(t.selectedIcon),
-              label: t.label,
-            ),
-        ],
+      bottomNavigationBar: DecoratedBox(
+        decoration: BoxDecoration(
+          border: Border(
+            top: BorderSide(
+                color: Theme.of(context).colorScheme.outlineVariant),
+          ),
+        ),
+        child: NavigationBar(
+          selectedIndex: _index,
+          onDestinationSelected: _goTo,
+          destinations: [
+            for (final t in tabs)
+              NavigationDestination(
+                icon: Icon(t.icon),
+                selectedIcon: Icon(t.selectedIcon),
+                label: t.label,
+              ),
+          ],
+        ),
       ),
     );
   }

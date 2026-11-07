@@ -4,6 +4,9 @@ import '../models.dart';
 import '../store.dart';
 import '../utils.dart';
 import '../widgets.dart';
+import 'house_picker.dart';
+import 'household_screen.dart';
+import 'registrations_screen.dart';
 
 class ResidentsScreen extends StatefulWidget {
   const ResidentsScreen({super.key});
@@ -14,10 +17,111 @@ class ResidentsScreen extends StatefulWidget {
 
 class _ResidentsScreenState extends State<ResidentsScreen> {
   String _query = '';
+  bool _onlyUnlinked = false;
+
+  bool _isLinked(Resident r) =>
+      r.houseId != null && store.houseById(r.houseId!) != null;
+
+  /// Atur / pindah rumah warga (termasuk warga lama yang nomor rumahnya
+  /// dulu diketik manual).
+  Future<void> _assignHouse(Resident r) async {
+    final linked = _isLinked(r);
+    // Warga lama: tawarkan rumah yang labelnya cocok dengan catatan lama.
+    String? houseId = linked ? r.houseId : null;
+    if (houseId == null) {
+      final match = store.houseMatchingLabel(r.houseNo);
+      final occupant = match == null ? null : store.residentOfHouse(match.id);
+      if (match != null && (occupant == null || occupant.id == r.id)) {
+        houseId = match.id;
+      }
+    }
+    final suggested = !linked && houseId != null;
+    final formKey = GlobalKey<FormState>();
+
+    final picked = await showDialog<String>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialog) => AlertDialog(
+          title: Text(linked ? 'Pindah rumah' : 'Atur rumah'),
+          content: Form(
+            key: formKey,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(r.name, style: Theme.of(ctx).textTheme.titleMedium),
+                  Text(
+                    linked
+                        ? 'Saat ini: ${r.houseNo}'
+                        : 'Tercatat (diketik manual): "${r.houseNo}"',
+                    style: Theme.of(ctx).textTheme.bodySmall,
+                  ),
+                  if (suggested)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Text(
+                        'Rumah yang cocok sudah dipilihkan. Periksa lalu simpan.',
+                        style: TextStyle(
+                            color: Theme.of(ctx).colorScheme.primary,
+                            fontSize: 12),
+                      ),
+                    ),
+                  const SizedBox(height: 16),
+                  HousePickerField(
+                    houseId: houseId,
+                    allowEstateChange: false,
+                    exceptResidentId: r.id,
+                    onChanged: (v) => setDialog(() => houseId = v),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Batal')),
+            FilledButton(
+              onPressed: () {
+                if (formKey.currentState!.validate()) {
+                  Navigator.pop(ctx, houseId);
+                }
+              },
+              child: const Text('Simpan'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (picked == null || !mounted) return;
+    if (linked && picked == r.houseId) return;
+    final h = store.houseById(picked)!;
+    await runAction(
+      context,
+      store.assignHouse(r.id, picked),
+      success: '${r.name} kini di rumah ${store.houseLabel(h)}',
+    );
+  }
+
+  Future<void> _autoLink() async {
+    final result = await runAction(context, store.autoLinkResidents());
+    if (result == null || !mounted) return;
+    final (linked, remaining) = result;
+    showSnack(
+      context,
+      linked == 0
+          ? 'Tidak ada nomor rumah yang cocok dengan master. '
+              'Atur $remaining warga secara manual.'
+          : '$linked warga terhubung otomatis'
+              '${remaining > 0 ? ', $remaining perlu diatur manual' : ''}.',
+    );
+    if (remaining > 0) setState(() => _onlyUnlinked = true);
+  }
 
   Future<void> _addResident() async {
     final name = TextEditingController();
-    final house = TextEditingController();
+    String? houseId;
     final phone = TextEditingController();
     final email = TextEditingController();
     final formKey = GlobalKey<FormState>();
@@ -26,7 +130,8 @@ class _ResidentsScreenState extends State<ResidentsScreen> {
 
     final ok = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialog) => AlertDialog(
         title: const Text('Tambah warga'),
         content: Form(
           key: formKey,
@@ -40,12 +145,12 @@ class _ResidentsScreenState extends State<ResidentsScreen> {
                       const InputDecoration(labelText: 'Nama kepala keluarga'),
                   validator: req,
                 ),
-                TextFormField(
-                  controller: house,
-                  decoration: const InputDecoration(
-                      labelText: 'Blok / No. rumah', hintText: 'C1/02'),
-                  validator: req,
+                const SizedBox(height: 12),
+                HousePickerField(
+                  houseId: houseId,
+                  onChanged: (v) => setDialog(() => houseId = v),
                 ),
+                const SizedBox(height: 12),
                 TextFormField(
                   controller: phone,
                   keyboardType: TextInputType.phone,
@@ -79,6 +184,7 @@ class _ResidentsScreenState extends State<ResidentsScreen> {
           ),
         ],
       ),
+      ),
     );
 
     if (ok != true || !mounted) return;
@@ -88,7 +194,7 @@ class _ResidentsScreenState extends State<ResidentsScreen> {
     try {
       tempPassword = await store.addResident(
         n,
-        house.text.trim(),
+        houseId!,
         phone.text.trim(),
         email: store.isFirebase ? email.text.trim() : null,
       );
@@ -148,7 +254,49 @@ class _ResidentsScreenState extends State<ResidentsScreen> {
             ListTile(
               leading: CircleAvatar(child: Text(r.name[0])),
               title: Text(r.name, style: Theme.of(ctx).textTheme.titleMedium),
-              subtitle: Text('Rumah ${r.houseNo} · ${r.phone}'),
+              subtitle: Text([
+                'Rumah ${r.houseNo}',
+                if (r.houseId != null)
+                  store
+                      .clusterById(store.houseById(r.houseId!)?.clusterId ?? '')
+                      ?.name,
+                if (store.houseById(r.houseId ?? '') case final h?)
+                  store.houseTypeOf(h)?.name,
+                r.phone,
+              ].whereType<String>().join(' · ')),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: _isLinked(r)
+                  ? OutlinedButton.icon(
+                      onPressed: () {
+                        Navigator.pop(ctx);
+                        _assignHouse(r);
+                      },
+                      icon: const Icon(Icons.swap_horiz),
+                      label: const Text('Pindah rumah'),
+                    )
+                  : FilledButton.icon(
+                      onPressed: () {
+                        Navigator.pop(ctx);
+                        _assignHouse(r);
+                      },
+                      icon: const Icon(Icons.add_home_outlined),
+                      label: const Text('Atur rumah dari master data'),
+                    ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: OutlinedButton.icon(
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  Navigator.of(context).push(MaterialPageRoute(
+                      builder: (_) => HouseholdScreen(residentId: r.id)));
+                },
+                icon: const Icon(Icons.family_restroom),
+                label: Text(
+                    'Anggota rumah (${store.membersOf(r.id).length})'),
+              ),
             ),
             const Divider(),
             Padding(
@@ -175,12 +323,15 @@ class _ResidentsScreenState extends State<ResidentsScreen> {
       listenable: store,
       builder: (context, _) {
         final q = _query.toLowerCase();
+        final unlinked = store.unlinkedResidents.length;
+        if (unlinked == 0) _onlyUnlinked = false;
         final list = store.residents
             .where((r) =>
-                r.name.toLowerCase().contains(q) ||
-                r.houseNo.toLowerCase().contains(q))
+                (!_onlyUnlinked || !_isLinked(r)) &&
+                (r.name.toLowerCase().contains(q) ||
+                    r.houseNo.toLowerCase().contains(q)))
             .toList()
-          ..sort((a, b) => a.houseNo.compareTo(b.houseNo));
+          ..sort((a, b) => compareHouseNumber(a.houseNo, b.houseNo));
 
         return Scaffold(
           appBar: AppBar(title: Text('Data Warga (${store.residents.length})')),
@@ -200,6 +351,28 @@ class _ResidentsScreenState extends State<ResidentsScreen> {
                   onChanged: (v) => setState(() => _query = v),
                 ),
               ),
+              if (store.pendingRegistrations.isNotEmpty)
+                Card(
+                  margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                  color: Theme.of(context).colorScheme.secondaryContainer,
+                  child: ListTile(
+                    leading: const Icon(Icons.how_to_reg_outlined),
+                    title: Text(
+                        '${store.pendingRegistrations.length} pendaftaran warga '
+                        'menunggu verifikasi'),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                        builder: (_) => const RegistrationsScreen())),
+                  ),
+                ),
+              if (unlinked > 0)
+                _UnlinkedBanner(
+                  count: unlinked,
+                  filtering: _onlyUnlinked,
+                  onToggleFilter: () =>
+                      setState(() => _onlyUnlinked = !_onlyUnlinked),
+                  onAutoLink: _autoLink,
+                ),
               Expanded(
                 child: list.isEmpty
                     ? const EmptyState(
@@ -214,7 +387,19 @@ class _ResidentsScreenState extends State<ResidentsScreen> {
                           return ListTile(
                             leading: CircleAvatar(child: Text(r.name[0])),
                             title: Text(r.name),
-                            subtitle: Text('${r.houseNo} · ${r.phone}'),
+                            subtitle: _isLinked(r)
+                                ? Text('${r.houseNo} · ${r.phone}')
+                                : Text.rich(TextSpan(children: [
+                                    TextSpan(text: '${r.houseNo} · '),
+                                    TextSpan(
+                                      text: 'belum terhubung',
+                                      style: TextStyle(
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .error,
+                                          fontWeight: FontWeight.w600),
+                                    ),
+                                  ])),
                             trailing: unpaid > 0
                                 ? StatusChip(
                                     'Tunggakan ${formatRupiah(unpaid)}',
@@ -229,6 +414,64 @@ class _ResidentsScreenState extends State<ResidentsScreen> {
           ),
         );
       },
+    );
+  }
+}
+
+class _UnlinkedBanner extends StatelessWidget {
+  const _UnlinkedBanner({
+    required this.count,
+    required this.filtering,
+    required this.onToggleFilter,
+    required this.onAutoLink,
+  });
+
+  final int count;
+  final bool filtering;
+  final VoidCallback onToggleFilter;
+  final VoidCallback onAutoLink;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Card(
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+      color: scheme.errorContainer,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.link_off, color: scheme.onErrorContainer),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    '$count warga belum terhubung ke master rumah',
+                    style: TextStyle(
+                        color: scheme.onErrorContainer,
+                        fontWeight: FontWeight.w700),
+                  ),
+                ),
+              ],
+            ),
+            Wrap(
+              alignment: WrapAlignment.end,
+              children: [
+                TextButton(
+                  onPressed: onToggleFilter,
+                  child: Text(filtering ? 'Tampilkan semua' : 'Tampilkan'),
+                ),
+                TextButton(
+                  onPressed: onAutoLink,
+                  child: const Text('Hubungkan otomatis'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

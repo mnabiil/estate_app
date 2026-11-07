@@ -180,7 +180,6 @@ class _VisitorFormScreenState extends State<VisitorFormScreen> {
               controller: _name,
               decoration: const InputDecoration(
                 labelText: 'Nama tamu',
-                border: OutlineInputBorder(),
               ),
               validator: (v) =>
                   (v == null || v.trim().isEmpty) ? 'Wajib diisi' : null,
@@ -191,7 +190,6 @@ class _VisitorFormScreenState extends State<VisitorFormScreen> {
               decoration: const InputDecoration(
                 labelText: 'Keperluan',
                 hintText: 'Contoh: Silaturahmi, antar paket',
-                border: OutlineInputBorder(),
               ),
               validator: (v) =>
                   (v == null || v.trim().isEmpty) ? 'Wajib diisi' : null,

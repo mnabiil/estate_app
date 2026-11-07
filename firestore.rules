@@ -1,7 +1,13 @@
 rules_version = '2';
 
-// Aturan akses Griya Kita.
-// - Profil login ada di /users/{uid}: { estateId, role: 'warga'|'pengelola', residentId?, name }
+// Aturan akses Nilaya Living.
+// - Profil login ada di /users/{uid}:
+//     { estateId, estateIds?, role: 'warga'|'pengelola'|'pendaftar', residentId?,
+//       name, householdRole?: 'anggota', relation? }
+//   Kepala keluarga & anggota rumah berbagi residentId yang sama, sehingga
+//   aturan "data milik rumah ini" berlaku untuk semuanya.
+//   Pengelola bisa mengelola beberapa perumahan lewat estateIds (estateId =
+//   perumahan utama). Warga hanya terikat ke satu estateId.
 //   Profil HANYA dibuat lewat Cloud Function / Console, tidak bisa ditulis dari aplikasi.
 // - Warga hanya bisa membaca data miliknya sendiri. Pengelola bisa membaca semua
 //   data di perumahannya.
@@ -18,8 +24,13 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
     }
 
+    // Pendaftar (registrasi mandiri yang belum disetujui) tidak termasuk:
+    // belum boleh membaca data perumahan.
     function inEstate(estateId) {
-      return signedIn() && me().estateId == estateId;
+      return signedIn()
+        && me().role in ['warga', 'pengelola']
+        && (me().estateId == estateId
+          || (me().role == 'pengelola' && estateId in me().get('estateIds', [])));
     }
 
     function isAdmin(estateId) {
@@ -42,19 +53,122 @@ service cloud.firestore {
 
     match /users/{uid} {
       allow read: if signedIn() && request.auth.uid == uid;
-      allow write: if false;
+      // Satu-satunya perubahan dari aplikasi: menandai password sementara
+      // sudah diganti. Peran & perumahan hanya ditulis server.
+      allow update: if signedIn() && request.auth.uid == uid
+        && ((onlyChanges(['mustChangePassword'])
+            && request.resource.data.mustChangePassword == false)
+          // Preferensi notifikasi push.
+          || (onlyChanges(['notifPrefs'])
+            && request.resource.data.notifPrefs is map
+            && request.resource.data.notifPrefs.keys().hasOnly(['announcements', 'bills'])));
+      allow create, delete: if false;
+    }
+
+    // Token perangkat untuk notifikasi push (FCM), hanya milik sendiri.
+    match /users/{uid}/devices/{token} {
+      allow read, delete: if signedIn() && request.auth.uid == uid;
+      allow create, update: if signedIn() && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['platform', 'updatedAt'])
+        && request.resource.data.updatedAt == request.time;
+    }
+
+    function validName(max) {
+      return request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.name.size() <= max;
     }
 
     match /estates/{estateId} {
       allow read: if inEstate(estateId);
-      allow write: if false;
+      // Master perumahan: pengelola boleh mengubah nama, alamat, tarif IPL,
+      // dan deposit ijin renovasi.
+      allow update: if isAdmin(estateId)
+        && onlyChanges(['name', 'address', 'monthlyFee',
+          'renovationDepositSmall', 'renovationDepositLarge',
+          'registrationOpen', 'billDueDay'])
+        && (request.resource.data.get('billDueDay', 10) is int
+          && request.resource.data.get('billDueDay', 10) >= 1
+          && request.resource.data.get('billDueDay', 10) <= 28)
+        && request.resource.data.get('registrationOpen', true) is bool
+        && (request.resource.data.get('renovationDepositSmall', 1) is int
+          && request.resource.data.get('renovationDepositSmall', 1) > 0)
+        && (request.resource.data.get('renovationDepositLarge', 1) is int
+          && request.resource.data.get('renovationDepositLarge', 1) > 0)
+        && validName(100)
+        && (!('address' in request.resource.data)
+          || (request.resource.data.address is string
+            && request.resource.data.address.size() <= 300))
+        && request.resource.data.monthlyFee is int
+        && request.resource.data.monthlyFee > 0;
+      allow create, delete: if false;
+
+      // Master Cluster > Blok > No. rumah. Semua anggota perumahan bisa
+      // membaca (untuk daftar pilihan), hanya pengelola yang bisa mengubah.
+      match /clusters/{clusterId} {
+        allow read: if inEstate(estateId);
+        allow create, update: if isAdmin(estateId)
+          && request.resource.data.keys().hasOnly(['name'])
+          && validName(60);
+        allow delete: if isAdmin(estateId);
+      }
+
+      match /blocks/{blockId} {
+        allow read: if inEstate(estateId);
+        allow create, update: if isAdmin(estateId)
+          && request.resource.data.keys().hasOnly(['clusterId', 'typeId', 'name'])
+          && request.resource.data.clusterId is string
+          && exists(/databases/$(database)/documents/estates/$(estateId)/clusters/$(request.resource.data.clusterId))
+          // Setiap blok berisi satu tipe dari cluster yang sama.
+          && request.resource.data.typeId is string
+          && get(/databases/$(database)/documents/estates/$(estateId)/houseTypes/$(request.resource.data.typeId)).data.clusterId
+            == request.resource.data.clusterId
+          && validName(20);
+        allow delete: if isAdmin(estateId);
+      }
+
+      // Tipe rumah milik satu cluster.
+      match /houseTypes/{typeId} {
+        allow read: if inEstate(estateId);
+        allow create, update: if isAdmin(estateId)
+          && request.resource.data.keys().hasOnly(['clusterId', 'name', 'buildingArea', 'landArea', 'monthlyFee'])
+          // Tarif IPL khusus tipe (opsional).
+          && (request.resource.data.get('monthlyFee', null) == null
+            || (request.resource.data.monthlyFee is int
+              && request.resource.data.monthlyFee > 0))
+          && request.resource.data.clusterId is string
+          && validName(40)
+          && (request.resource.data.get('buildingArea', null) == null
+            || request.resource.data.buildingArea is int)
+          && (request.resource.data.get('landArea', null) == null
+            || request.resource.data.landArea is int);
+        allow delete: if isAdmin(estateId);
+      }
+
+      match /houses/{houseId} {
+        allow read: if inEstate(estateId);
+        allow create, update: if isAdmin(estateId)
+          && request.resource.data.keys().hasOnly(['clusterId', 'blockId', 'number'])
+          && request.resource.data.blockId is string
+          && request.resource.data.clusterId is string
+          && request.resource.data.number is string
+          && request.resource.data.number.size() > 0
+          && request.resource.data.number.size() <= 10;
+        allow delete: if isAdmin(estateId);
+      }
 
       match /residents/{residentId} {
         allow read: if isAdmin(estateId)
           || (inEstate(estateId) && me().residentId == residentId);
         // Membuat warga baru (beserta akunnya) lewat Cloud Function createResident.
         allow create, delete: if false;
-        allow update: if isAdmin(estateId) && onlyChanges(['name', 'houseNo', 'phone']);
+        // Pengelola boleh mengubah data warga, termasuk mengatur / memindah
+        // rumah (houseId harus ada di master rumah perumahan ini).
+        allow update: if isAdmin(estateId)
+          && onlyChanges(['name', 'houseNo', 'phone', 'houseId'])
+          && request.resource.data.houseNo is string
+          && (request.resource.data.get('houseId', null) == null
+            || exists(/databases/$(database)/documents/estates/$(estateId)/houses/$(request.resource.data.houseId)));
       }
 
       match /bills/{billId} {
@@ -76,7 +190,10 @@ service cloud.firestore {
           && request.resource.data.status == 'baru'
           && request.resource.data.title is string
           && request.resource.data.title.size() <= 120
-          && request.resource.data.description.size() <= 2000;
+          && request.resource.data.description.size() <= 2000
+          && (!('photoUrls' in request.resource.data)
+            || (request.resource.data.photoUrls is list
+              && request.resource.data.photoUrls.size() <= 3));
         allow update: if isAdmin(estateId)
           && onlyChanges(['status'])
           && request.resource.data.status in ['baru', 'diproses', 'selesai'];
@@ -93,6 +210,138 @@ service cloud.firestore {
           && onlyChanges(['checkedInAt'])
           && request.resource.data.checkedInAt == request.time;
         allow delete: if isAdmin(estateId) || ownsExisting(estateId);
+      }
+
+      // Anggota rumah (keluarga/penyewa), ID = uid akun anggota. Dibuat &
+      // dihapus lewat Cloud Function; satu rumah saling bisa melihat.
+      match /members/{uid} {
+        allow read: if isAdmin(estateId) || ownsExisting(estateId);
+        allow write: if false;
+      }
+
+      // Pendaftaran warga mandiri (ID dokumen = uid pendaftar). Dibuat &
+      // disetujui lewat Cloud Function; pengelola boleh menolak langsung.
+      // Kepala keluarga juga boleh membaca & menolak permintaan "gabung"
+      // ke rumahnya (persetujuan tetap lewat Cloud Function).
+      match /registrations/{uid} {
+        function headOfTargetHousehold() {
+          return inEstate(estateId)
+            && me().role == 'warga'
+            && me().get('householdRole', '') != 'anggota'
+            && resource.data.kind == 'gabung'
+            && resource.data.residentId == me().residentId;
+        }
+
+        allow read: if isAdmin(estateId)
+          || (signedIn() && request.auth.uid == uid)
+          || headOfTargetHousehold();
+        allow update: if (isAdmin(estateId) || headOfTargetHousehold())
+          && onlyChanges(['status', 'note', 'reviewedAt'])
+          && resource.data.status == 'menunggu'
+          && request.resource.data.status == 'ditolak'
+          && request.resource.data.note is string
+          && request.resource.data.note.size() > 0
+          && request.resource.data.reviewedAt == request.time;
+        allow create, delete: if false;
+      }
+
+      // Ijin renovasi. Warga mengajukan; deposit wajib sesuai jenis renovasi
+      // (diatur di dokumen perumahan). Alur status diatur pengelola.
+      match /renovations/{renovationId} {
+        function estateDoc() {
+          return get(/databases/$(database)/documents/estates/$(estateId)).data;
+        }
+        function requiredDeposit(type) {
+          return type == 'besar'
+            ? estateDoc().get('renovationDepositLarge', 5000000)
+            : estateDoc().get('renovationDepositSmall', 1000000);
+        }
+
+        allow read: if isAdmin(estateId) || ownsExisting(estateId);
+        allow create: if ownsNew(estateId)
+          && request.resource.data.keys().hasOnly(['residentId', 'type',
+            'description', 'contractor', 'contractorPhone', 'startDate',
+            'endDate', 'deposit', 'attachments', 'status', 'depositStatus',
+            'adminNote', 'createdAt'])
+          && (request.resource.data.get('attachments', []) is list
+            && request.resource.data.get('attachments', []).size() <= 5)
+          && request.resource.data.type in ['kecil', 'besar']
+          && request.resource.data.deposit == requiredDeposit(request.resource.data.type)
+          && request.resource.data.status == 'diajukan'
+          && request.resource.data.depositStatus == 'belumBayar'
+          && request.resource.data.adminNote == ''
+          && request.resource.data.description is string
+          && request.resource.data.description.size() <= 1000
+          && request.resource.data.contractor is string
+          && request.resource.data.contractor.size() <= 100
+          // Tanggal "YYYY-MM-DD": bisa dibandingkan sebagai teks.
+          && request.resource.data.startDate.matches('[0-9]{4}-[0-9]{2}-[0-9]{2}')
+          && request.resource.data.endDate.matches('[0-9]{4}-[0-9]{2}-[0-9]{2}')
+          && request.resource.data.endDate >= request.resource.data.startDate
+          && request.resource.data.createdAt == request.time;
+        // Alur: diajukan -> disetujui -> warga bayar deposit (menunggu
+        // verifikasi) -> pengelola verifikasi (dibayar) -> selesai ->
+        // deposit dikembalikan.
+        allow update: if
+          // Pengelola: tinjau, verifikasi deposit, perpanjang, selesai.
+          (isAdmin(estateId)
+            && onlyChanges(['status', 'depositStatus', 'depositMethod',
+              'depositProofUrl', 'depositPaidAt', 'depositRefund',
+              'depositRefundedAt', 'adminNote', 'endDate'])
+            && request.resource.data.status in
+              ['diajukan', 'disetujui', 'ditolak', 'selesai', 'dibatalkan']
+            && request.resource.data.depositStatus in
+              ['belumBayar', 'menungguVerifikasi', 'dibayar', 'dikembalikan']
+            && request.resource.data.endDate >= resource.data.startDate
+            && request.resource.data.get('depositRefund', 0) <= resource.data.deposit)
+          // Warga: membatalkan sebelum deposit dibayar.
+          || (ownsExisting(estateId)
+            && onlyChanges(['status'])
+            && (resource.data.status == 'diajukan'
+              || resource.data.status == 'disetujui')
+            && resource.data.depositStatus == 'belumBayar'
+            && request.resource.data.status == 'dibatalkan')
+          // Warga: membayar deposit setelah ijin disetujui.
+          || (ownsExisting(estateId)
+            && onlyChanges(['depositStatus', 'depositMethod',
+              'depositProofUrl', 'depositSubmittedAt'])
+            && resource.data.status == 'disetujui'
+            && resource.data.depositStatus == 'belumBayar'
+            && request.resource.data.depositStatus == 'menungguVerifikasi'
+            && request.resource.data.depositMethod is string
+            && request.resource.data.depositSubmittedAt == request.time);
+        allow delete: if false;
+      }
+
+      // Catatan barang masuk/keluar selama renovasi (pengelola/satpam atau
+      // warga pemilik), hanya saat pekerjaan berjalan.
+      match /renovationLogs/{logId} {
+        function renovation() {
+          return get(/databases/$(database)/documents/estates/$(estateId)/renovations/$(request.resource.data.renovationId)).data;
+        }
+
+        allow read: if isAdmin(estateId) || ownsExisting(estateId);
+        allow create: if inEstate(estateId)
+          && request.resource.data.keys().hasOnly(['renovationId', 'residentId',
+            'direction', 'item', 'quantity', 'note', 'photoUrls', 'at',
+            'recordedBy'])
+          // Pekerjaan berjalan: disetujui dan deposit sudah diterima.
+          && renovation().status == 'disetujui'
+          && renovation().depositStatus == 'dibayar'
+          && (request.resource.data.get('photoUrls', []) is list
+            && request.resource.data.get('photoUrls', []).size() <= 3)
+          && renovation().residentId == request.resource.data.residentId
+          && (isAdmin(estateId) || request.resource.data.residentId == me().residentId)
+          && request.resource.data.direction in ['masuk', 'keluar']
+          && request.resource.data.item is string
+          && request.resource.data.item.size() > 0
+          && request.resource.data.item.size() <= 100
+          && request.resource.data.quantity is string
+          && request.resource.data.quantity.size() <= 40
+          && request.resource.data.note.size() <= 200
+          && request.resource.data.at == request.time;
+        allow update: if false;
+        allow delete: if isAdmin(estateId);
       }
 
       match /announcements/{announcementId} {

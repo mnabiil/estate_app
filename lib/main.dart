@@ -2,9 +2,14 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 
 import 'firebase_options.dart';
+import 'models.dart';
+import 'push.dart';
 import 'screens/home_shell.dart';
 import 'screens/login_screen.dart';
+import 'screens/password_screen.dart';
+import 'screens/register_screen.dart';
 import 'store.dart';
+import 'theme.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -18,26 +23,33 @@ Future<void> main() async {
   runApp(const EstateApp());
 }
 
-const _seedColor = Color(0xFF2E7D5B);
-
 class EstateApp extends StatelessWidget {
   const EstateApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Griya Kita',
+      title: 'Nilaya Living',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(colorSchemeSeed: _seedColor, useMaterial3: true),
-      darkTheme: ThemeData(
-        colorSchemeSeed: _seedColor,
-        brightness: Brightness.dark,
-        useMaterial3: true,
-      ),
+      // Banner notifikasi push saat aplikasi terbuka.
+      scaffoldMessengerKey: PushService.instance.messengerKey,
+      theme: buildTheme(Brightness.light),
+      darkTheme: buildTheme(Brightness.dark),
       home: ListenableBuilder(
         listenable: store,
-        builder: (context, _) =>
-            store.currentUser == null ? const LoginScreen() : const HomeShell(),
+        builder: (context, _) {
+          final user = store.currentUser;
+          if (user == null) return const LoginScreen();
+          // Registrasi mandiri: tunggu verifikasi pengelola.
+          if (user.role == Role.pendaftar) {
+            return const PendingRegistrationScreen();
+          }
+          // Login pertama dengan password sementara dari pengelola.
+          if (user.mustChangePassword) {
+            return const ChangePasswordScreen(forced: true);
+          }
+          return const HomeShell();
+        },
       ),
     );
   }

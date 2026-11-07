@@ -1,0 +1,66 @@
+rules_version = '2';
+
+// Foto keluhan: estates/{estateId}/complaints/{residentId}/{complaintId}/{file}
+// - Warga hanya bisa mengunggah ke folder miliknya sendiri (gambar, maks. 5 MB).
+// - Pengelola perumahan & warga pemilik bisa melihat.
+// - File tidak bisa diubah/dihapus dari aplikasi.
+service firebase.storage {
+  match /b/{bucket}/o {
+    function me() {
+      return firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data;
+    }
+
+    // Pengelola bisa mengelola beberapa perumahan (estateIds).
+    function adminOf(estateId) {
+      return me().role == 'pengelola'
+        && (me().estateId == estateId || estateId in me().get('estateIds', []));
+    }
+
+    // Dokumen pendaftaran warga mandiri (KTP / bukti hunian).
+    match /estates/{estateId}/registrations/{uid}/{fileName} {
+      allow read: if request.auth != null
+        && (request.auth.uid == uid || adminOf(estateId));
+      allow create: if request.auth != null
+        && request.auth.uid == uid
+        && request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+      allow update, delete: if false;
+    }
+
+    // Ijin renovasi: lampiran pengajuan, bukti deposit, foto barang.
+    // estates/{estateId}/renovations/{residentId}/{renovationId}/...
+    match /estates/{estateId}/renovations/{residentId}/{renovationId}/{allPaths=**} {
+      allow read: if request.auth != null
+        && (adminOf(estateId)
+          || (me().estateId == estateId && me().residentId == residentId));
+
+      allow create: if request.auth != null
+        && (adminOf(estateId)
+          || (me().role == 'warga'
+            && me().estateId == estateId
+            && me().residentId == residentId))
+        && request.resource.size < 10 * 1024 * 1024
+        && (request.resource.contentType.matches('image/.*')
+          || request.resource.contentType == 'application/pdf'
+          || request.resource.contentType.matches('application/(msword|vnd[.]openxmlformats-officedocument[.].*|vnd[.]ms-excel)'));
+
+      allow update, delete: if false;
+    }
+
+    match /estates/{estateId}/complaints/{residentId}/{complaintId}/{fileName} {
+      allow read: if request.auth != null
+        && (adminOf(estateId)
+          || (me().estateId == estateId && me().residentId == residentId));
+
+      allow create: if request.auth != null
+        && me().estateId == estateId
+        && me().role == 'warga'
+        && me().residentId == residentId
+        && fileName.matches('[0-2]\\.jpg')
+        && request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+
+      allow update, delete: if false;
+    }
+  }
+}

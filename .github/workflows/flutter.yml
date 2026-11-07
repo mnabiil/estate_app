@@ -1,0 +1,35 @@
+name: Flutter CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: flutter-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Analyze & test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Versi Flutter
+        run: flutter --version
+
+      - name: Ambil dependensi
+        run: flutter pub get
+
+      - name: Analisis kode
+        run: flutter analyze --no-fatal-infos
+
+      - name: Jalankan tes
+        run: flutter test
