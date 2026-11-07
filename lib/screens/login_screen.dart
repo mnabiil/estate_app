@@ -23,14 +23,30 @@ class _LoginScreenState extends State<LoginScreen> {
 
     return Scaffold(
       backgroundColor: AppColors.teal,
-      body: DecoratedBox(
-        decoration: const BoxDecoration(gradient: AppColors.splashGradient),
-        child: SafeArea(
-          bottom: false,
-          child: CustomScrollView(
-            slivers: [
-              SliverFillRemaining(
-                hasScrollBody: false,
+      body: Stack(
+        children: [
+          // Latar: gradasi di atas, warna panel di bawah, agar panel putih
+          // tampak menyambung sampai dasar layar pada layar yang tinggi.
+          Positioned.fill(
+            child: Column(
+              children: [
+                const Expanded(
+                  child: DecoratedBox(
+                    decoration:
+                        BoxDecoration(gradient: AppColors.splashGradient),
+                    child: SizedBox.expand(),
+                  ),
+                ),
+                Expanded(child: ColoredBox(color: scheme.surface)),
+              ],
+            ),
+          ),
+          SafeArea(
+            bottom: false,
+            child: SingleChildScrollView(
+              child: DecoratedBox(
+                decoration:
+                    const BoxDecoration(gradient: AppColors.splashGradient),
                 child: Column(
                   children: [
                     // Bagian atas: logo & nama aplikasi di atas latar gradasi.
@@ -74,8 +90,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
                     ),
                     // Panel putih berisi form login.
-                    Expanded(
-                      child: Container(
+                    Container(
                         width: double.infinity,
                         decoration: BoxDecoration(
                           color: scheme.surface,
@@ -111,13 +126,12 @@ class _LoginScreenState extends State<LoginScreen> {
                           ),
                         ),
                       ),
-                    ),
                   ],
                 ),
               ),
-            ],
+            ),
           ),
-        ),
+        ],
       ),
     );
   }
