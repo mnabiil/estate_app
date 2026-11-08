@@ -101,7 +101,12 @@ service cloud.firestore {
           // Preferensi notifikasi push.
           || (onlyChanges(['notifPrefs'])
             && request.resource.data.notifPrefs is map
-            && request.resource.data.notifPrefs.keys().hasOnly(['announcements', 'bills'])));
+            && request.resource.data.notifPrefs.keys().hasOnly(['announcements', 'bills']))
+          // Foto profil sendiri (URL Storage), atau dihapus.
+          || (onlyChanges(['photoUrl'])
+            && (!('photoUrl' in request.resource.data)
+              || (request.resource.data.photoUrl is string
+                && request.resource.data.photoUrl.size() <= 2000))));
       allow create, delete: if false;
     }
 

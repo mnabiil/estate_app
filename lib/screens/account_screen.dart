@@ -36,9 +36,29 @@ class AccountScreen extends StatelessWidget {
         children: [
           const SizedBox(height: 24),
           Center(
-            child: CircleAvatar(
-              radius: 40,
-              child: Text(user.name[0], style: theme.textTheme.headlineMedium),
+            child: GestureDetector(
+              onTap: () => changeProfilePhoto(context),
+              child: Stack(
+                children: [
+                  const UserAvatar(radius: 44),
+                  Positioned(
+                    right: 0,
+                    bottom: 0,
+                    child: CircleAvatar(
+                      radius: 15,
+                      backgroundColor: theme.colorScheme.surface,
+                      child: Icon(Icons.photo_camera,
+                          size: 17, color: theme.colorScheme.primary),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          Center(
+            child: TextButton(
+              onPressed: () => changeProfilePhoto(context),
+              child: const Text('Ganti foto profil'),
             ),
           ),
           const SizedBox(height: 12),

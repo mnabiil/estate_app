@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'models.dart';
+import 'photo_widgets.dart';
 import 'store.dart';
 
 class StatusChip extends StatelessWidget {
@@ -533,4 +534,100 @@ Future<void> pickActiveHome(BuildContext context) async {
   );
   if (key == null || key == store.activeHome?.key || !context.mounted) return;
   await runAction(context, store.switchHome(key), success: 'Rumah aktif diganti');
+}
+
+/// Avatar akun yang login: foto profil bila ada, selain itu inisial nama.
+class UserAvatar extends StatelessWidget {
+  const UserAvatar({super.key, this.radius = 24});
+  final double radius;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final name = store.currentUser?.name ?? '';
+    final photo = store.profilePhotoUrl;
+    return CircleAvatar(
+      radius: radius,
+      backgroundColor: scheme.primary,
+      foregroundColor: scheme.onPrimary,
+      child: photo != null && photo.isNotEmpty
+          ? ClipOval(
+              child: SizedBox.square(
+                  dimension: radius * 2, child: photoImage(photo)))
+          : Text(
+              name.isEmpty ? '?' : name[0].toUpperCase(),
+              style: TextStyle(
+                  fontWeight: FontWeight.w700, fontSize: radius * 0.75),
+            ),
+    );
+  }
+}
+
+/// Ganti / hapus foto profil sendiri (dengan konfirmasi).
+Future<void> changeProfilePhoto(BuildContext context) async {
+  final hasPhoto = (store.profilePhotoUrl ?? '').isNotEmpty;
+  final choice = await showModalBottomSheet<String>(
+    context: context,
+    showDragHandle: true,
+    builder: (ctx) => SafeArea(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ListTile(
+            leading: const Icon(Icons.photo_camera_outlined),
+            title: Text(hasPhoto ? 'Ganti foto profil' : 'Pasang foto profil'),
+            onTap: () => Navigator.pop(ctx, 'pick'),
+          ),
+          if (hasPhoto)
+            ListTile(
+              leading: const Icon(Icons.delete_outline),
+              title: const Text('Hapus foto profil'),
+              onTap: () => Navigator.pop(ctx, 'remove'),
+            ),
+        ],
+      ),
+    ),
+  );
+  if (choice == null || !context.mounted) return;
+  if (choice == 'remove') {
+    final ok = await confirmSave(context,
+        title: 'Hapus foto profil?',
+        details: {'Akun': store.currentUser?.name ?? ''},
+        action: 'Ya, hapus');
+    if (!ok || !context.mounted) return;
+    await runAction(context, store.setProfilePhoto(null),
+        success: 'Foto profil dihapus');
+    return;
+  }
+  final photo = await pickPhoto(context);
+  if (photo == null || !context.mounted) return;
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      icon: const Icon(Icons.fact_check_outlined),
+      title: const Text('Pakai foto ini?'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ClipOval(
+            child: SizedBox.square(
+                dimension: 140, child: photoImage(photo.path)),
+          ),
+          const SizedBox(height: 12),
+          const Text('Periksa kembali, apakah foto sudah sesuai?'),
+        ],
+      ),
+      actions: [
+        TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Periksa lagi')),
+        FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Ya, simpan')),
+      ],
+    ),
+  );
+  if (ok != true || !context.mounted) return;
+  await runAction(context, store.setProfilePhoto(photo),
+      success: 'Foto profil diperbarui');
 }

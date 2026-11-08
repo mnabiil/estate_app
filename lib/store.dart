@@ -201,6 +201,7 @@ class EstateStore extends ChangeNotifier {
     final prefs = (d['notifPrefs'] as Map<String, dynamic>?) ?? const {};
     notifyAnnouncements = prefs['announcements'] != false;
     notifyBills = prefs['bills'] != false;
+    profilePhotoUrl = d['photoUrl'] as String?;
     currentUser = AppUser(
       name: d['name'] as String? ?? '',
       role: role,
@@ -807,6 +808,46 @@ class EstateStore extends ChangeNotifier {
           name: r.name, role: Role.warga, residentId: r.id, email: r.email);
     }
     _demoHomes();
+    profilePhotoUrl = _demoPhotos[_photoKey];
+    notifyListeners();
+  }
+
+  // ---------- Foto profil ----------
+
+  /// Foto profil akun yang login (URL Storage; path lokal di mode demo).
+  String? profilePhotoUrl;
+
+  /// Mode demo: foto profil per akun agar tetap ada setelah login ulang.
+  final Map<String, String> _demoPhotos = {};
+  String get _photoKey =>
+      '${currentUser?.role.name}/${currentUser?.email ?? currentUser?.name}';
+
+  /// Ganti foto profil sendiri; [photo] null = hapus foto.
+  Future<void> setProfilePhoto(XFile? photo) async {
+    if (currentUser == null) throw StateError('Silakan login.');
+    if (!isFirebase) {
+      if (photo == null) {
+        _demoPhotos.remove(_photoKey);
+      } else {
+        _demoPhotos[_photoKey] = photo.path;
+      }
+      profilePhotoUrl = photo?.path;
+      notifyListeners();
+      return;
+    }
+    final uid = _auth!.currentUser!.uid;
+    final user = _db!.collection('users').doc(uid);
+    if (photo == null) {
+      await user.update({'photoUrl': FieldValue.delete()});
+      profilePhotoUrl = null;
+      notifyListeners();
+      return;
+    }
+    final url = await _uploadFile(
+        'users/$uid/avatar-${DateTime.now().millisecondsSinceEpoch}.jpg', photo,
+        contentType: 'image/jpeg');
+    await user.update({'photoUrl': url});
+    profilePhotoUrl = url;
     notifyListeners();
   }
 
@@ -902,6 +943,7 @@ class EstateStore extends ChangeNotifier {
 
   Future<void> logout() async {
     currentUser = null;
+    profilePhotoUrl = null;
     homes.clear();
     _activeHomeKey = null;
     myRegistration = null;

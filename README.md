@@ -77,6 +77,12 @@ Level akses disalin ke tiap perumahan. Pengelola memilih perumahan aktif di **Ak
 `firestore.rules` (`can(estateId, perm)`) dan Cloud Functions. Pengelola lama yang belum tercatat
 di `staff` dianggap pemilik.
 
+## Foto profil
+
+Akun → ketuk avatar → **Ganti foto profil** (kamera/galeri, dengan pratinjau & konfirmasi) atau
+hapus. Foto per akun (kepala keluarga & anggota rumah masing-masing), tampil di Akun & Beranda.
+Disimpan di Storage `users/{uid}/` dan `users/{uid}.photoUrl`.
+
 ## Pengumuman
 
 Pengelola (hak pengumuman) membuat pengumuman dengan **foto sampul**, **tanggal berakhir**
