@@ -2416,8 +2416,8 @@ class EstateStore extends ChangeNotifier {
   /// Perumahan contoh kedua milik pengelola yang sama: master data saja.
   void _seedSecondDemoEstate() {
     final d = _DemoEstate(
-      name: 'Nilaya Residence',
-      address: 'Jl. Nilaya Raya No. 8, Tangerang',
+      name: 'Amani Residence',
+      address: 'Jl. Amani Raya No. 8, Tangerang',
       fee: 300000,
     );
     final c = Cluster(id: _newId('C'), name: 'Cluster Melati');
@@ -2439,7 +2439,7 @@ class EstateStore extends ChangeNotifier {
         number: n.toString().padLeft(2, '0'),
       ));
     }
-    _demoEstates['nilaya-residence'] = d;
+    _demoEstates['amani-residence'] = d;
   }
 
   void _seedDemo() {
@@ -2464,7 +2464,7 @@ class EstateStore extends ChangeNotifier {
     _estateId = 'griya-asri';
     estates.addAll([
       EstateInfo(id: 'griya-asri', name: estateName),
-      EstateInfo(id: 'nilaya-residence', name: 'Nilaya Residence'),
+      EstateInfo(id: 'amani-residence', name: 'Amani Residence'),
     ]);
 
     // Master: Cluster > Tipe > Blok > No. rumah (01-12 per blok).

@@ -2,7 +2,7 @@
     <!-- Notifikasi push (Android 13+ meminta izin ke pengguna). -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <application
-        android:label="Nilaya Living"
+        android:label="Amani Living"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

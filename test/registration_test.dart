@@ -77,7 +77,7 @@ void main() {
   group('registrasi mandiri', () {
     test('pilihan perumahan & rumah yang tersedia', () async {
       final estates = await s.registrationEstates();
-      expect(estates.map((e) => e.id), ['griya-asri', 'nilaya-residence']);
+      expect(estates.map((e) => e.id), ['griya-asri', 'amani-residence']);
 
       final o = await s.registrationOptions('griya-asri');
       expect(o.available.contains(house('A1', '01').id), isTrue);
@@ -158,21 +158,21 @@ void main() {
     });
 
     test('mendaftar ke perumahan lain (tidak aktif)', () async {
-      final o = await s.registrationOptions('nilaya-residence');
+      final o = await s.registrationOptions('amani-residence');
       final m1 = o.blocks.single;
       final h = o.housesOf(m1.id).first;
       await register(
           name: 'Dina',
           email: 'dina@contoh.id',
           houseId: h.id,
-          estateId: 'nilaya-residence');
+          estateId: 'amani-residence');
       expect(s.myRegistration!.houseNo, 'M1/01');
 
       await s.logout();
       s.login(Role.pengelola);
       expect(s.pendingRegistrations.map((r) => r.name),
           ['Hendra Gunawan', 'Dimas Santoso']);
-      await s.switchEstate('nilaya-residence');
+      await s.switchEstate('amani-residence');
       expect(s.pendingRegistrations.map((r) => r.name), ['Dina']);
     });
 
@@ -184,7 +184,7 @@ void main() {
           fee: s.fee,
           registrationOpen: false);
       final estates = await s.registrationEstates();
-      expect(estates.map((e) => e.id), ['nilaya-residence']);
+      expect(estates.map((e) => e.id), ['amani-residence']);
     });
 
     test('validasi data pendaftaran', () {

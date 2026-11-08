@@ -1,6 +1,6 @@
-# Nilaya Living — Aplikasi Manajemen Perumahan (Prototipe)
+# Amani Living — Aplikasi Manajemen Perumahan (Prototipe)
 
-<p align="center"><img src="assets/branding/logo_stacked.png" width="220" alt="Logo Nilaya Living"></p>
+<p align="center"><img src="assets/branding/logo_stacked.png" width="220" alt="Logo Amani Living"></p>
 
 Aplikasi Flutter untuk Android & iOS yang mengelola perumahan/cluster.
 Dua peran: **Warga** dan **Pengelola**. Data masih contoh (in-memory), belum ada backend.
@@ -27,8 +27,8 @@ teal, aksen hijau lime, kartu abu muda bersudut besar. Font **Lato** & **Raleway
 
 ## Logo & nama
 
-**Nilaya** (Sanskerta) berarti *kediaman, tempat bernaung*; **Living** menegaskan kehidupan
-sehari-hari warga. Logo: atap yang menaungi (rumah sebagai tempat berlindung) dan dua daun
+**Amani** berarti *damai* (Swahili) dan dekat dengan *amān*, *aman/tenteram* (Arab);
+**Living** menegaskan kehidupan sehari-hari warga yang damai dan aman. Logo: atap yang menaungi (rumah sebagai tempat berlindung) dan dua daun
 yang tumbuh berdampingan dari dalam rumah (kehidupan yang tumbuh, lingkungan hijau, dan warga
 yang hidup bertetangga). Warna: teal `#234F68`, lime `#8BC83F`, navy `#252B5C`.
 

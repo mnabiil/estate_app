@@ -37,7 +37,7 @@ class NotificationSettingsScreen extends StatelessWidget {
                   icon: Icons.notifications_off_outlined,
                   color: scheme.error,
                   text: 'Izin notifikasi ditolak di HP ini. Aktifkan lewat '
-                      'Pengaturan HP → Aplikasi → Nilaya Living → Notifikasi.',
+                      'Pengaturan HP → Aplikasi → Amani Living → Notifikasi.',
                 ),
               SwitchListTile(
                 secondary: const Icon(Icons.campaign_outlined),

@@ -29,7 +29,7 @@ class EstateApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Nilaya Living',
+      title: 'Amani Living',
       debugShowCheckedModeBanner: false,
       // Banner notifikasi push saat aplikasi terbuka.
       scaffoldMessengerKey: PushService.instance.messengerKey,

@@ -1,5 +1,5 @@
 /**
- * Cloud Functions untuk Nilaya Living.
+ * Cloud Functions untuk Amani Living.
  *
  *  - createEstate        (callable)  pengelola membuat perumahan baru (multi-perumahan)
  *  - createResident      (callable)  pengelola menambah warga + membuat akun login

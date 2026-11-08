@@ -64,7 +64,7 @@ class _LoginScreenState extends State<LoginScreen> {
                             height: 104,
                           ),
                           Text(
-                            'Nilaya',
+                            'Amani',
                             textAlign: TextAlign.center,
                             style: theme.textTheme.displaySmall?.copyWith(
                               fontWeight: FontWeight.w800,

@@ -1,5 +1,5 @@
 @echo off
-rem Menjalankan Nilaya Living di emulator/HP Android yang terhubung.
+rem Menjalankan Amani Living di emulator/HP Android yang terhubung.
 rem Tekan r = hot reload, R = restart, q = keluar.
 set "ANDROID_HOME=D:\Tools\android-sdk"
 set "ANDROID_SDK_ROOT=D:\Tools\android-sdk"

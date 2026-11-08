@@ -127,7 +127,7 @@ class AccountScreen extends StatelessWidget {
             title: const Text('Tentang aplikasi'),
             onTap: () => showAboutDialog(
               context: context,
-              applicationName: 'Nilaya Living',
+              applicationName: 'Amani Living',
               applicationVersion: '0.1.0 (prototipe)',
               applicationIcon: Image.asset(
                 'assets/images/app_icon.png',
@@ -135,7 +135,7 @@ class AccountScreen extends StatelessWidget {
                 height: 48,
               ),
               applicationLegalese:
-                  'Nilaya (Sanskerta): kediaman, tempat bernaung.\n'
+                  'Amani: damai (Swahili) & aman, tenteram (Arab).\n'
                   'Aplikasi manajemen perumahan.',
             ),
           ),

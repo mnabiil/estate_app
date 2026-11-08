@@ -1,6 +1,6 @@
 rules_version = '2';
 
-// Aturan akses Nilaya Living.
+// Aturan akses Amani Living.
 // - Profil login ada di /users/{uid}:
 //     { estateId, estateIds?, role: 'warga'|'pengelola'|'pendaftar', residentId?,
 //       name, householdRole?: 'anggota', relation? }
