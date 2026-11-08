@@ -244,6 +244,7 @@ class Bill {
     this.status = BillStatus.belumBayar,
     this.paidAt,
     this.method,
+    this.paymentId,
     DateTime? dueDate,
   }) : _due = dueDate;
 
@@ -256,6 +257,9 @@ class Bill {
   BillStatus status;
   DateTime? paidAt;
   String? method;
+
+  /// Pembayaran (transfer terverifikasi) yang melunasi tagihan ini.
+  String? paymentId;
 
   /// Jatuh tempo disimpan saat tagihan dibuat (mengikuti pengaturan
   /// perumahan saat itu). Tagihan lama tanpa field ini: tanggal 10.
@@ -280,6 +284,7 @@ class Bill {
             BillStatus.values.byName(m['status'] as String? ?? 'belumBayar'),
         paidAt: _date(m['paidAt']),
         method: m['method'] as String?,
+        paymentId: m['paymentId'] as String?,
         dueDate: m['dueDate'] is String ? parseKey(m['dueDate'] as String) : null,
       );
 
@@ -1012,3 +1017,150 @@ class StaffMember {
         permissions: AdminPermission.parse(m['permissions']),
       );
 }
+
+// ---------- Pembayaran IPL (transfer + kode unik) ----------
+
+/// Rekening tujuan transfer milik perumahan.
+class BankAccount {
+  const BankAccount({
+    required this.bankName,
+    required this.accountNumber,
+    required this.accountName,
+  });
+
+  final String bankName;
+  final String accountNumber;
+  final String accountName;
+
+  String get label => '$bankName $accountNumber a.n. $accountName';
+
+  Map<String, dynamic> toMap() => {
+        'bankName': bankName,
+        'accountNumber': accountNumber,
+        'accountName': accountName,
+      };
+
+  factory BankAccount.fromMap(Map<String, dynamic> m) => BankAccount(
+        bankName: m['bankName'] as String? ?? '',
+        accountNumber: m['accountNumber'] as String? ?? '',
+        accountName: m['accountName'] as String? ?? '',
+      );
+
+  static List<BankAccount> listFrom(Object? v) => [
+        for (final e in (v as List<dynamic>? ?? const []))
+          if (e is Map) BankAccount.fromMap(e.cast<String, dynamic>()),
+      ];
+}
+
+enum PaymentStatus {
+  menungguTransfer('Menunggu transfer'),
+  menungguVerifikasi('Menunggu verifikasi'),
+  ditolak('Ditolak, perlu tindakan'),
+  diterima('Diterima'),
+  dibatalkan('Dibatalkan'),
+  kedaluwarsa('Kedaluwarsa');
+
+  const PaymentStatus(this.label);
+  final String label;
+}
+
+/// Batas waktu transfer setelah kode unik dibuat.
+const paymentValidity = Duration(hours: 24);
+
+/// Satu kali pembayaran (transfer) untuk satu atau beberapa tagihan IPL.
+/// Total = jumlah tagihan + kode unik 3 digit, agar transfer setiap rumah
+/// mudah dibedakan di mutasi rekening.
+class Payment {
+  Payment({
+    required this.id,
+    required this.residentId,
+    required this.billIds,
+    required this.baseAmount,
+    required this.uniqueCode,
+    required this.reference,
+    required this.createdAt,
+    required this.expiresAt,
+    this.houseNo = '',
+    this.residentName = '',
+    this.periods = const [],
+    this.status = PaymentStatus.menungguTransfer,
+    this.proofUrl,
+    this.submittedAt,
+    this.note = '',
+    this.reviewedAt,
+    this.reviewedBy = '',
+  });
+
+  final String id;
+  final String residentId;
+  final List<String> billIds;
+
+  /// Label periode tagihan, mis. ["2026-09", "2026-10"].
+  final List<String> periods;
+  final int baseAmount;
+  final int uniqueCode;
+
+  /// Kode referensi untuk berita transfer, mis. "IPL-A105-123".
+  final String reference;
+  final String houseNo;
+  final String residentName;
+  final DateTime createdAt;
+  final DateTime expiresAt;
+  PaymentStatus status;
+  String? proofUrl;
+  DateTime? submittedAt;
+
+  /// Alasan penolakan dari pengelola.
+  String note;
+  DateTime? reviewedAt;
+  String reviewedBy;
+
+  int get total => baseAmount + uniqueCode;
+
+  /// Masih mengunci tagihannya (belum selesai/dibatalkan/kedaluwarsa).
+  bool isActiveOn(DateTime now) => switch (status) {
+        PaymentStatus.menungguTransfer => now.isBefore(expiresAt),
+        PaymentStatus.menungguVerifikasi || PaymentStatus.ditolak => true,
+        _ => false,
+      };
+
+  /// Status untuk ditampilkan (menunggu transfer yang lewat batas =
+  /// kedaluwarsa).
+  PaymentStatus statusOn(DateTime now) =>
+      status == PaymentStatus.menungguTransfer && !now.isBefore(expiresAt)
+          ? PaymentStatus.kedaluwarsa
+          : status;
+
+  /// Warga boleh mengunggah bukti: menunggu transfer (belum lewat batas)
+  /// atau ditolak (unggah ulang).
+  bool canUploadProofOn(DateTime now) =>
+      status == PaymentStatus.ditolak ||
+      (status == PaymentStatus.menungguTransfer && now.isBefore(expiresAt));
+
+  factory Payment.fromMap(String id, Map<String, dynamic> m) => Payment(
+        id: id,
+        residentId: m['residentId'] as String? ?? '',
+        billIds: [for (final b in (m['billIds'] as List<dynamic>? ?? const [])) '$b'],
+        periods: [for (final p in (m['periods'] as List<dynamic>? ?? const [])) '$p'],
+        baseAmount: (m['baseAmount'] as num?)?.toInt() ?? 0,
+        uniqueCode: (m['uniqueCode'] as num?)?.toInt() ?? 0,
+        reference: m['reference'] as String? ?? '',
+        houseNo: m['houseNo'] as String? ?? '',
+        residentName: m['residentName'] as String? ?? '',
+        createdAt: _date(m['createdAt']) ?? DateTime.now(),
+        expiresAt: _date(m['expiresAt']) ??
+            (_date(m['createdAt']) ?? DateTime.now()).add(paymentValidity),
+        status: PaymentStatus.values
+            .byName(m['status'] as String? ?? 'menungguTransfer'),
+        proofUrl: m['proofUrl'] as String?,
+        submittedAt: _date(m['submittedAt']),
+        note: m['note'] as String? ?? '',
+        reviewedAt: _date(m['reviewedAt']),
+        reviewedBy: m['reviewedBy'] as String? ?? '',
+      );
+}
+
+/// Kode referensi transfer: "IPL-A105-123".
+String paymentReference(String houseNo, int code) =>
+    'IPL-${houseNo.toUpperCase().replaceAll(RegExp(r'[^A-Z0-9]'), '')}-'
+    '${code.toString().padLeft(3, '0')}';

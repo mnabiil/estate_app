@@ -11,7 +11,9 @@ rules_version = '2';
 //   Profil HANYA dibuat lewat Cloud Function / Console, tidak bisa ditulis dari aplikasi.
 // - Warga hanya bisa membaca data miliknya sendiri. Pengelola bisa membaca semua
 //   data di perumahannya.
-// - Status "lunas" dari warga hanya bisa diubah oleh server (Cloud Function payBill).
+// - Pembayaran IPL hanya transfer ke rekening perumahan + kode unik. Pembayaran
+//   dibuat & diverifikasi (tagihan -> lunas) oleh Cloud Function; warga hanya
+//   mengunggah bukti / membatalkan, pengelola (hak billing) bisa menolak bukti.
 
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -232,6 +234,41 @@ service cloud.firestore {
         // Lunas hanya lewat verifikasi pembayaran (Cloud Function).
         allow update: if false;
         allow delete: if can(estateId, 'billing');
+      }
+
+      // Pembayaran (transfer + kode unik). Dibuat oleh createPayment,
+      // diterima oleh verifyPayment (Cloud Functions).
+      match /payments/{paymentId} {
+        allow read: if isAdmin(estateId) || ownsExisting(estateId);
+        allow create, delete: if false;
+        // Warga mengunggah bukti: menunggu transfer (belum kedaluwarsa) atau
+        // ditolak (unggah ulang) -> menunggu verifikasi.
+        allow update: if (ownsExisting(estateId)
+            && me().role == 'warga'
+            && onlyChanges(['status', 'proofUrl', 'submittedAt', 'note'])
+            && request.resource.data.status == 'menungguVerifikasi'
+            && (resource.data.status == 'ditolak'
+              || (resource.data.status == 'menungguTransfer'
+                && request.time < resource.data.expiresAt))
+            && request.resource.data.proofUrl is string
+            && request.resource.data.proofUrl.size() <= 2000
+            && request.resource.data.submittedAt == request.time
+            && request.resource.data.note == '')
+          // Warga membatalkan sebelum diverifikasi.
+          || (ownsExisting(estateId)
+            && me().role == 'warga'
+            && onlyChanges(['status'])
+            && resource.data.status in ['menungguTransfer', 'ditolak']
+            && request.resource.data.status == 'dibatalkan')
+          // Pengelola menolak bukti dengan alasan.
+          || (can(estateId, 'billing')
+            && onlyChanges(['status', 'note', 'reviewedAt', 'reviewedBy'])
+            && resource.data.status == 'menungguVerifikasi'
+            && request.resource.data.status == 'ditolak'
+            && request.resource.data.note is string
+            && request.resource.data.note.size() > 0
+            && request.resource.data.note.size() <= 500
+            && request.resource.data.reviewedAt == request.time);
       }
 
       match /complaints/{complaintId} {

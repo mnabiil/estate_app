@@ -10,7 +10,7 @@ Dua peran: **Warga** dan **Pengelola**. Data masih contoh (in-memory), belum ada
 | Fitur | Warga | Pengelola |
 |---|---|---|
 | Beranda (ringkasan) | Tagihan, keluhan, tamu hari ini | Jumlah warga, tunggakan, keluhan aktif, tamu |
-| Tagihan IPL | Lihat & bayar (simulasi VA/QRIS/e-wallet) | Lihat semua, tandai lunas (tunai), buat tagihan bulan ini |
+| Tagihan IPL | Pilih satu/beberapa tagihan → transfer ke rekening perumahan dengan kode unik → unggah bukti | Atur rekening, verifikasi/tolak bukti transfer, buat tagihan bulan ini |
 | Keluhan | Buat (dengan foto, maks. 3) & pantau status | Lihat semua, ubah status (Baru/Diproses/Selesai) |
 | Tamu | Daftarkan tamu → dapat kode akses 6 digit | Log tamu, check-in |
 | Pengumuman | Baca | Buat pengumuman |
@@ -63,6 +63,35 @@ tua, saudara, penyewa, lainnya) dan disetujui oleh **kepala keluarga rumah itu**
 Anggota rumah) atau pengelola. Setelah disetujui, pendaftar menjadi anggota rumah. Nama
 penghuni tidak ditampilkan ke pendaftar.
 
+## Tim pengelola & level akses
+
+Akun → **Tim pengelola** (hanya **pemilik**). Tab *Level akses* berisi level yang bisa dibuat
+sendiri (template: Bendahara, Admin Warga, Satpam, Koordinator Bangunan) dengan hak:
+master data, warga & pendaftaran, tagihan & pembayaran, keluhan, tamu, pengumuman, ijin
+renovasi, catat barang renovasi. Tab *Tim* untuk menambah pengelola (email; akun baru dibuat
+dengan password sementara oleh `addStaff`), mengganti level, atau mengeluarkan (`removeStaff`).
+Pemilik punya semua hak; minimal harus ada satu pemilik. Hak dicek di aplikasi,
+`firestore.rules` (`can(estateId, perm)`) dan Cloud Functions. Pengelola lama yang belum tercatat
+di `staff` dianggap pemilik.
+
+## Pembayaran IPL (transfer + kode unik)
+
+Pembayaran **hanya transfer** ke rekening perumahan (Tagihan → ikon bank, hak *tagihan*;
+maks. 5 rekening per perumahan).
+
+1. Warga menekan **Bayar** dan memilih tagihan. **Beberapa tagihan bisa dibayar sekaligus**
+   dalam satu transfer, tetapi tagihan **terlama wajib ikut** (mencentang bulan yang lebih baru
+   otomatis mencentang bulan sebelumnya).
+2. Server (`createPayment`) membuat **kode unik 3 digit** (001–999, tidak dipakai rumah lain yang
+   sedang membayar) → total transfer = tagihan + kode, mis. Rp 750.000 + 457 = **Rp 750.457**,
+   berita transfer `IPL-A105-457`. Berlaku 24 jam; satu rumah hanya satu pembayaran aktif.
+3. Warga transfer, lalu **unggah foto bukti**. Status: *menunggu verifikasi*; pengelola dengan hak
+   tagihan mendapat notifikasi.
+4. Pengelola mencocokkan mutasi rekening → **Terima** (`verifyPayment`: semua tagihan lunas) atau
+   **Tolak** dengan alasan (warga unggah ulang atau membatalkan).
+
+Kode yang kedaluwarsa/dibatalkan tidak mengunci tagihan; warga cukup membuat kode baru.
+
 ## Tarif IPL & jatuh tempo
 
 Master Data → profil perumahan: **tarif IPL** perumahan dan **tanggal jatuh tempo** (1–28,
@@ -81,7 +110,8 @@ Firebase Cloud Messaging, dikirim server (Cloud Functions) ke perangkat warga & 
 | Tagihan terbit | `notifyBillCreated` | "Tagihan IPL November 2026 – Rp 250.000" |
 | H-2 jatuh tempo, 09.00 WIB | `remindBills` (harian) | Pengingat untuk yang belum bayar |
 | H+2 jatuh tempo, 09.00 WIB | `remindBills` (harian) | Tagihan lewat jatuh tempo |
-| Tagihan lunas | `notifyBillPaid` | "Pembayaran diterima" |
+| Bukti transfer diunggah | `notifyPayment` | Ke pengelola berhak tagihan: "Mohon verifikasi" |
+| Pembayaran diterima / ditolak | `notifyPayment` | Ke warga: lunas, atau alasan penolakan |
 
 - Token perangkat: `users/{uid}/devices/{token}` (hanya pemilik); dihapus saat logout & bila
   sudah tidak valid. Pengiriman per pengguna, bukan topik publik.
@@ -173,7 +203,10 @@ Aplikasi otomatis memilih mode:
 users/{uid}                      { estateId, estateIds?, role: warga|pengelola|pendaftar, residentId?, name,
                                    mustChangePassword?, householdRole?: anggota, relation? }
 estates/{estateId}               { name, address, monthlyFee, billDueDay (1–28), renovationDepositSmall,
-                                   renovationDepositLarge, registrationOpen }
+                                   renovationDepositLarge, registrationOpen,
+                                   bankAccounts[{bankName, accountNumber, accountName}] }
+  staff/{uid}                    { name, email, phone, isOwner, roleId, roleName, permissions[] }
+  adminRoles/{id}                { name, permissions[] }
   members/{uid}                  { residentId, name, relation, phone, email, addedBy, createdAt }
   registrations/{uid}            { estateId, name, phone, email, houseId, houseNo, clusterName, occupancy,
                                    docUrl, kind: baru|gabung, relation?, residentId?,
@@ -183,7 +216,12 @@ estates/{estateId}               { name, address, monthlyFee, billDueDay (1–28
   houseTypes/{id}                { clusterId, name, buildingArea, landArea, monthlyFee? }
   houses/{id}                    { clusterId, blockId, number }
   residents/{residentId}         { name, houseId, houseNo, phone, email, uid }
-  bills/{residentId_YYYY-MM}     { residentId, period, amount, dueDate ("YYYY-MM-DD"), status, paidAt, method }
+  bills/{residentId_YYYY-MM}     { residentId, period, amount, dueDate ("YYYY-MM-DD"), status, paidAt, method,
+                                   paymentId? }
+  payments/{id}                  { residentId, billIds[], periods[], baseAmount, uniqueCode, reference,
+                                   houseNo, residentName, status: menungguTransfer|menungguVerifikasi|
+                                   ditolak|diterima|dibatalkan, createdAt, expiresAt, proofUrl,
+                                   submittedAt, note, reviewedAt, reviewedBy }
   complaints/{id}                { residentId, title, description, category, status, photoUrls, createdAt }
   visitors/{id}                  { residentId, name, purpose, visitDate, code, checkedInAt }
   announcements/{id}             { title, body, createdAt }
@@ -197,6 +235,7 @@ estates/{estateId}               { name, address, monthlyFee, billDueDay (1–28
 ```
 
 Foto keluhan di Firebase Storage: `estates/{estateId}/complaints/{residentId}/{complaintId}/{0-2}.jpg`.
+Bukti transfer: `estates/{estateId}/payments/{residentId}/{paymentId}/`.
 File renovasi: `estates/{estateId}/renovations/{residentId}/{renovationId}/` → `lampiran/`, `deposit/`, `barang/{logId}/`.
 
 Alur ijin renovasi: **ajukan** (detail + jangka waktu + lampiran) → **disetujui** pengelola →
@@ -208,9 +247,8 @@ masuk/keluar + foto) → **selesai** → **deposit dikembalikan**.
 - `firestore.rules`: warga hanya bisa membaca datanya sendiri; profil & peran tidak bisa diubah dari aplikasi.
 - `storage.rules`: warga hanya bisa mengunggah foto keluhan ke foldernya sendiri (gambar, maks. 5 MB);
   foto hanya bisa dilihat pemiliknya & pengelola.
-- Status **lunas** dari warga hanya diubah server (`payBill`). Saat ini `payBill` masih
-  **simulasi** (`functions/.env` → `PAYMENT_SIMULATION=true`). Matikan sebelum rilis dan ganti
-  dengan payment gateway.
+- Status **lunas** hanya diubah server saat pengelola memverifikasi transfer (`verifyPayment`);
+  tagihan tidak bisa diubah langsung dari aplikasi.
 - Tagihan bulanan dibuat otomatis tiap tanggal 1 pukul 01.00 WIB (`generateMonthlyBills`).
 
 ## Struktur kode
@@ -233,5 +271,5 @@ storage.rules            # Aturan akses foto (Storage)
 ## Langkah berikutnya
 
 - Login OTP nomor HP (Firebase Phone Auth)
-- Pembayaran nyata via payment gateway (Midtrans, Xendit)
+- Opsional: pencocokan mutasi rekening otomatis (API bank / Moota) untuk verifikasi
 - Scan QR kode tamu oleh satpam

@@ -24,16 +24,20 @@ void main() {
     final before = store.unpaidTotal('R1');
     expect(before, greaterThan(0));
 
-    // Buka tab Tagihan dan bayar tagihan yang belum lunas.
+    // Buka tab Tagihan, pilih tagihan, lalu dapat kode unik transfer.
     await tester.tap(find.text('Tagihan'));
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(ChoiceChip, 'Belum bayar'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Bayar'));
     await tester.pumpAndSettle();
-    await tester.tap(find.textContaining('Jatuh tempo').first);
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('QRIS'));
+    expect(find.text('Pilih tagihan yang dibayar'), findsOneWidget);
+    await tester.tap(find.text('Buat kode bayar'));
     await tester.pumpAndSettle();
 
-    expect(store.unpaidTotal('R1'), before - monthlyFee);
+    final p = store.activePaymentOf('R1')!;
+    expect(p.total, before + p.uniqueCode);
+    expect(find.text('+${p.uniqueCode.toString().padLeft(3, '0')}'),
+        findsOneWidget);
+    // Belum lunas sebelum diverifikasi pengelola.
+    expect(store.unpaidTotal('R1'), before);
   });
 }

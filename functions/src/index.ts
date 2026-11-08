@@ -12,9 +12,10 @@
  *  - addStaff / removeStaff (callable) pemilik mengelola tim pengelola
  *  - resetResidentPassword (callable) pengelola membuat password sementara baru
  *                                    untuk warga yang lupa password
- *  - payBill             (callable)  warga membayar tagihan (SIMULASI, lihat catatan)
+ *  - createPayment / verifyPayment (callable) pembayaran IPL via transfer
+ *                                    rekening perumahan + kode unik, verifikasi pengelola
  *  - generateMonthlyBills (terjadwal) membuat tagihan IPL tiap tanggal 1, 01.00 WIB
- *  - notifyAnnouncement / notifyBillCreated / notifyBillPaid (trigger Firestore)
+ *  - notifyAnnouncement / notifyBillCreated / notifyBillPaid / notifyPayment (trigger Firestore)
  *  - remindBills         (terjadwal, harian 09.00 WIB) pengingat H-2 & H+2 jatuh tempo
  *                        -> notifikasi push (FCM) ke perangkat warga
  *
@@ -249,40 +250,140 @@ export const createResident = onCall(async (req) => {
 // ---------------------------------------------------------------------------
 
 /**
- * SIMULASI pembayaran: langsung menandai lunas.
- *
- * Hanya aktif bila PAYMENT_SIMULATION=true (lihat functions/.env).
- * Untuk produksi, ganti dengan: buat transaksi di Midtrans/Xendit -> kembalikan
- * URL/VA ke aplikasi -> tandai lunas di webhook setelah verifikasi signature.
+ * Pembayaran IPL hanya lewat transfer ke rekening perumahan
+ * (estates/{e}.bankAccounts). Alur:
+ *  1. createPayment  : warga memilih tagihan (terlama wajib ikut) -> server
+ *                      membuat kode unik 1–999 (unik di antara pembayaran aktif
+ *                      perumahan) sehingga total transfer tiap rumah berbeda.
+ *  2. warga transfer & mengunggah bukti (update dokumen, dijaga firestore.rules)
+ *  3. verifyPayment  : pengelola (hak "billing") mencocokkan mutasi rekening ->
+ *                      semua tagihan dalam pembayaran menjadi lunas.
+ *     Menolak bukti cukup update dokumen (firestore.rules).
  */
-export const payBill = onCall(async (req) => {
-  if (process.env.PAYMENT_SIMULATION !== "true") {
-    throw new HttpsError("failed-precondition", "Pembayaran online belum diaktifkan.");
-  }
+const PAYMENT_VALIDITY_MS = 24 * 60 * 60 * 1000;
+
+function isActivePayment(p: FirebaseFirestore.DocumentData, now: number): boolean {
+  if (p.status === "menungguVerifikasi" || p.status === "ditolak") return true;
+  if (p.status !== "menungguTransfer") return false;
+  const exp = p.expiresAt?.toMillis?.() ?? 0;
+  return exp > now;
+}
+
+function paymentReference(houseNo: string, code: number): string {
+  return `IPL-${houseNo.toUpperCase().replace(/[^A-Z0-9]/g, "")}-${String(code).padStart(3, "0")}`;
+}
+
+export const createPayment = onCall(async (req) => {
   const me = await profileOf(req.auth?.uid);
   const data = req.data ?? {};
   const estateId = requireText(data.estateId, "estateId");
-  const billId = requireText(data.billId, "billId");
-  const method = typeof data.method === "string" ? data.method.slice(0, 60) : "Simulasi";
-  if (me.estateId !== estateId && !managesEstate(me, estateId)) {
-    throw new HttpsError("permission-denied", "Akses ditolak.");
+  const rid = me.residentId;
+  if (me.role !== "warga" || me.estateId !== estateId || !rid) {
+    throw new HttpsError("permission-denied", "Pembayaran dilakukan oleh warga perumahan ini.");
   }
+  const ids = Array.isArray(data.billIds) ? [...new Set(data.billIds.map(String))] : [];
+  if (ids.length === 0 || ids.length > 24) {
+    throw new HttpsError("invalid-argument", "Pilih 1–24 tagihan.");
+  }
+  const estateRef = db.doc(`estates/${estateId}`);
+  const paymentRef = estateRef.collection("payments").doc();
 
-  const ref = db.doc(`estates/${estateId}/bills/${billId}`);
+  const payment = await db.runTransaction(async (tx) => {
+    const estate = await tx.get(estateRef);
+    const accounts = estate.get("bankAccounts");
+    if (!Array.isArray(accounts) || accounts.length === 0) {
+      throw new HttpsError("failed-precondition", "Rekening pembayaran belum diatur pengelola.");
+    }
+    const resident = await tx.get(estateRef.collection("residents").doc(rid));
+    const unpaidSnap = await tx.get(
+      estateRef.collection("bills").where("residentId", "==", rid).where("status", "==", "belumBayar"),
+    );
+    const active = await tx.get(
+      estateRef.collection("payments").where("status", "in", ["menungguTransfer", "menungguVerifikasi", "ditolak"]),
+    );
+    const now = Date.now();
+    const activeDocs = active.docs.filter((d) => isActivePayment(d.data(), now));
+    if (activeDocs.some((d) => d.get("residentId") === rid)) {
+      throw new HttpsError("failed-precondition", "Masih ada pembayaran yang berjalan. Selesaikan atau batalkan dulu.");
+    }
+    const unpaid = unpaidSnap.docs.sort((a, b) => String(a.get("period")).localeCompare(String(b.get("period"))));
+    const wanted = new Set(ids);
+    if (!ids.every((id) => unpaid.some((b) => b.id === id))) {
+      throw new HttpsError("failed-precondition", "Tagihan tidak ditemukan atau sudah lunas.");
+    }
+    // Harus tagihan terlama secara berurutan (tidak melompati tunggakan).
+    const chosen = unpaid.slice(0, ids.length);
+    if (!chosen.every((b) => wanted.has(b.id))) {
+      throw new HttpsError("failed-precondition", "Tagihan terlama harus dibayar lebih dulu.");
+    }
+    const used = new Set(activeDocs.map((d) => Number(d.get("uniqueCode"))));
+    const free: number[] = [];
+    for (let c = 1; c <= 999; c++) if (!used.has(c)) free.push(c);
+    if (free.length === 0) {
+      throw new HttpsError("resource-exhausted", "Kode unik habis, coba beberapa saat lagi.");
+    }
+    const code = free[randomBytes(2).readUInt16BE(0) % free.length];
+    const houseNo = String(resident.get("houseNo") ?? "");
+    const doc = {
+      residentId: rid,
+      billIds: chosen.map((b) => b.id),
+      periods: chosen.map((b) => String(b.get("period"))),
+      baseAmount: chosen.reduce((t, b) => t + Number(b.get("amount") ?? 0), 0),
+      uniqueCode: code,
+      reference: paymentReference(houseNo, code),
+      houseNo,
+      residentName: String(resident.get("name") ?? ""),
+      status: "menungguTransfer",
+      createdAt: new Date(now),
+      expiresAt: new Date(now + PAYMENT_VALIDITY_MS),
+      createdBy: me.uid,
+      note: "",
+    };
+    tx.set(paymentRef, doc);
+    return doc;
+  });
+  return {
+    paymentId: paymentRef.id,
+    payment: {
+      ...payment,
+      createdAt: payment.createdAt.toISOString(),
+      expiresAt: payment.expiresAt.toISOString(),
+    },
+  };
+});
+
+export const verifyPayment = onCall(async (req) => {
+  const me = await profileOf(req.auth?.uid);
+  const data = req.data ?? {};
+  const estateId = requireText(data.estateId, "estateId");
+  const paymentId = requireText(data.paymentId, "paymentId");
+  await requirePermission(me, estateId, "billing", "memverifikasi pembayaran");
+  const ref = db.doc(`estates/${estateId}/payments/${paymentId}`);
   await db.runTransaction(async (tx) => {
     const snap = await tx.get(ref);
-    if (!snap.exists) throw new HttpsError("not-found", "Tagihan tidak ditemukan.");
-    const bill = snap.data()!;
-    if (me.role !== "pengelola" && bill.residentId !== me.residentId) {
-      throw new HttpsError("permission-denied", "Ini bukan tagihan Anda.");
+    if (!snap.exists) throw new HttpsError("not-found", "Pembayaran tidak ditemukan.");
+    const p = snap.data()!;
+    if (p.status !== "menungguVerifikasi") {
+      throw new HttpsError("failed-precondition", "Pembayaran tidak menunggu verifikasi.");
     }
-    if (bill.status === "lunas") {
-      throw new HttpsError("failed-precondition", "Tagihan ini sudah lunas.");
-    }
+    const billRefs = (p.billIds as string[]).map((id) => db.doc(`estates/${estateId}/bills/${id}`));
+    const bills = await Promise.all(billRefs.map((r) => tx.get(r)));
+    const code = String(p.uniqueCode).padStart(3, "0");
+    bills.forEach((b) => {
+      if (b.exists && b.get("status") !== "lunas") {
+        tx.update(b.ref, {
+          status: "lunas",
+          paidAt: FieldValue.serverTimestamp(),
+          method: `Transfer · kode ${code}`,
+          paymentId,
+        });
+      }
+    });
     tx.update(ref, {
-      status: "lunas",
-      paidAt: FieldValue.serverTimestamp(),
-      method: `${method} (simulasi)`,
+      status: "diterima",
+      reviewedAt: FieldValue.serverTimestamp(),
+      reviewedBy: me.name ?? "",
+      reviewedByUid: me.uid,
     });
   });
   return { ok: true };
@@ -872,6 +973,8 @@ export const notifyBillPaid = onDocumentUpdated(
     const after = event.data?.after;
     if (!before || !after) return;
     if (before.get("status") === "lunas" || after.get("status") !== "lunas") return;
+    // Lunas lewat verifikasi transfer: notifikasinya dari notifyPayment.
+    if (after.get("paymentId")) return;
     const estateId = event.params.estateId;
     await push(
       await residentUsers(estateId, String(after.get("residentId"))),
@@ -880,6 +983,68 @@ export const notifyBillPaid = onDocumentUpdated(
       `IPL ${monthLabel(String(after.get("period")))} ${rupiah(Number(after.get("amount")))} lunas. Terima kasih!`,
       { type: "bill", estateId, id: after.id },
     );
+  },
+);
+
+/** Pengelola perumahan yang punya hak tagihan (pemilik selalu). */
+async function billingStaffUsers(estateId: string) {
+  const users = (
+    await db.collection("users").where("role", "==", "pengelola")
+      .where("estateIds", "array-contains", estateId).get()
+  ).docs;
+  const primary = (
+    await db.collection("users").where("role", "==", "pengelola")
+      .where("estateId", "==", estateId).get()
+  ).docs;
+  const all = new Map([...users, ...primary].map((u) => [u.id, u]));
+  const result: QueryDocumentSnapshot[] = [];
+  for (const u of all.values()) {
+    const s = await db.doc(`estates/${estateId}/staff/${u.id}`).get();
+    const perms: string[] = s.get("permissions") ?? [];
+    if (!s.exists || s.get("isOwner") === true || perms.includes("billing")) result.push(u);
+  }
+  return result;
+}
+
+export const notifyPayment = onDocumentUpdated(
+  "estates/{estateId}/payments/{paymentId}",
+  async (event) => {
+    const before = event.data?.before;
+    const after = event.data?.after;
+    if (!before || !after) return;
+    const from = before.get("status");
+    const to = after.get("status");
+    if (from === to) return;
+    const estateId = event.params.estateId;
+    const total = rupiah(Number(after.get("baseAmount") ?? 0) + Number(after.get("uniqueCode") ?? 0));
+    const periods = ((after.get("periods") as string[] | undefined) ?? []).map(monthLabel).join(", ");
+    const data = { type: "payment", estateId, id: after.id };
+    const resident = String(after.get("residentId"));
+    if (to === "menungguVerifikasi") {
+      await push(
+        await billingStaffUsers(estateId),
+        "bills",
+        "Bukti transfer baru",
+        `${after.get("residentName") ?? ""} (${after.get("houseNo") ?? ""}) transfer ${total}. Mohon verifikasi.`,
+        data,
+      );
+    } else if (to === "diterima") {
+      await push(
+        await residentUsers(estateId, resident),
+        "bills",
+        "Pembayaran diterima ✅",
+        `IPL ${periods} lunas (${total}). Terima kasih!`,
+        data,
+      );
+    } else if (to === "ditolak") {
+      await push(
+        await residentUsers(estateId, resident),
+        "bills",
+        "Bukti transfer ditolak",
+        `${after.get("note") ?? "Mohon periksa kembali"}. Unggah ulang bukti di aplikasi.`,
+        data,
+      );
+    }
   },
 );
 

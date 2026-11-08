@@ -47,6 +47,22 @@ service firebase.storage {
       allow update, delete: if false;
     }
 
+    // Bukti transfer IPL: estates/{estateId}/payments/{residentId}/{paymentId}/{file}
+    match /estates/{estateId}/payments/{residentId}/{paymentId}/{fileName} {
+      allow read: if request.auth != null
+        && (adminOf(estateId)
+          || (me().estateId == estateId && me().residentId == residentId));
+
+      allow create: if request.auth != null
+        && me().estateId == estateId
+        && me().role == 'warga'
+        && me().residentId == residentId
+        && request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+
+      allow update, delete: if false;
+    }
+
     match /estates/{estateId}/complaints/{residentId}/{complaintId}/{fileName} {
       allow read: if request.auth != null
         && (adminOf(estateId)

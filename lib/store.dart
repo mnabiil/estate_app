@@ -35,6 +35,7 @@ class EstateStore extends ChangeNotifier {
     _seedDemoRenovations();
     _seedDemoRegistration();
     _seedDemoStaff();
+    _seedDemoPayments();
     // Anggota rumah contoh: istri Budi Santoso (A1/05).
     members.add(HouseholdMember(
       id: 'M-ANI',
@@ -55,6 +56,12 @@ class EstateStore extends ChangeNotifier {
   final List<Visitor> visitors = [];
   final List<Announcement> announcements = [];
   final List<Renovation> renovations = [];
+
+  /// Pembayaran IPL. Pengelola: semua; warga: rumahnya.
+  final List<Payment> payments = [];
+
+  /// Rekening tujuan transfer perumahan aktif.
+  final List<BankAccount> bankAccounts = [];
 
   /// Tim pengelola & level akses perumahan aktif.
   final List<StaffMember> staff = [];
@@ -266,6 +273,9 @@ class EstateStore extends ChangeNotifier {
       estateName = d['name'] as String? ?? 'Perumahan';
       estateAddress = d['address'] as String? ?? '';
       registrationOpen = d['registrationOpen'] as bool? ?? true;
+      bankAccounts
+        ..clear()
+        ..addAll(BankAccount.listFrom(d['bankAccounts']));
       fee = (d['monthlyFee'] as num?)?.toInt() ?? monthlyFee;
       billDueDay = (d['billDueDay'] as num?)?.toInt() ?? defaultBillDueDay;
       depositSmall = (d['renovationDepositSmall'] as num?)?.toInt() ??
@@ -321,6 +331,7 @@ class EstateStore extends ChangeNotifier {
           Registration.fromMap);
     }
     _bind(scoped('bills'), bills, Bill.fromMap);
+    _bind(scoped('payments'), payments, Payment.fromMap);
     _bind(scoped('renovations'), renovations, Renovation.fromMap);
     _bind(scoped('renovationLogs'), renovationLogs, RenovationLog.fromMap);
     _bind(scoped('complaints'), complaints, Complaint.fromMap);
@@ -370,6 +381,8 @@ class EstateStore extends ChangeNotifier {
     members.clear();
     staff.clear();
     adminRoles.clear();
+    payments.clear();
+    bankAccounts.clear();
     bills.clear();
     complaints.clear();
     visitors.clear();
@@ -2339,29 +2352,237 @@ class EstateStore extends ChangeNotifier {
       .where((b) => b.status == BillStatus.belumBayar)
       .fold(0, (total, b) => total + b.amount);
 
-  /// Warga: bayar lewat server (Cloud Function). Pengelola: tandai lunas (tunai).
-  Future<void> payBill(String billId, String method) async {
+  // ---------- Pembayaran: transfer ke rekening perumahan + kode unik ----------
+
+  Payment? paymentById(String id) =>
+      payments.where((p) => p.id == id).firstOrNull;
+
+  /// Tagihan belum dibayar sebuah rumah, terlama di atas.
+  List<Bill> unpaidBillsOf(String residentId) => billsForResident(residentId)
+      .where((b) => b.status == BillStatus.belumBayar)
+      .toList()
+    ..sort((a, b) => a.period.compareTo(b.period));
+
+  /// Pembayaran yang masih berjalan untuk sebuah rumah (maks. satu).
+  Payment? activePaymentOf(String residentId) {
+    final now = DateTime.now();
+    return payments
+        .where((p) => p.residentId == residentId && p.isActiveOn(now))
+        .firstOrNull;
+  }
+
+  /// Tagihan ini sedang dalam pembayaran yang belum selesai.
+  bool isBillLocked(Bill b) {
+    final now = DateTime.now();
+    return payments.any((p) => p.isActiveOn(now) && p.billIds.contains(b.id));
+  }
+
+  /// Pengelola: pembayaran yang menunggu verifikasi, terlama di atas.
+  List<Payment> get paymentsToVerify => payments
+      .where((p) => p.status == PaymentStatus.menungguVerifikasi)
+      .toList()
+    ..sort((a, b) => (a.submittedAt ?? a.createdAt)
+        .compareTo(b.submittedAt ?? b.createdAt));
+
+  /// Pengelola (hak tagihan): atur rekening tujuan transfer perumahan.
+  Future<void> saveBankAccounts(List<BankAccount> accounts) async {
+    _require(AdminPermission.billing);
+    if (accounts.length > 5) throw StateError('Maksimal 5 rekening.');
+    for (final a in accounts) {
+      if (a.bankName.trim().isEmpty ||
+          a.accountName.trim().isEmpty ||
+          !RegExp(r'^[0-9 .-]{5,30}$').hasMatch(a.accountNumber.trim())) {
+        throw StateError('Lengkapi nama bank, nomor & nama pemilik rekening.');
+      }
+    }
     if (!isFirebase) {
-      bills.firstWhere((b) => b.id == billId)
-        ..status = BillStatus.lunas
-        ..paidAt = DateTime.now()
-        ..method = method;
+      bankAccounts
+        ..clear()
+        ..addAll(accounts);
       notifyListeners();
       return;
     }
-    if (isAdmin) {
-      await _est.collection('bills').doc(billId).update({
-        'status': BillStatus.lunas.name,
-        'paidAt': FieldValue.serverTimestamp(),
-        'method': method,
-      });
-    } else {
-      await _fn!.httpsCallable('payBill').call<void>({
-        'estateId': _estateId,
-        'billId': billId,
-        'method': method,
-      });
+    await _est.update({
+      'bankAccounts': [for (final a in accounts) a.toMap()],
+    });
+  }
+
+  /// Warga memilih tagihan yang dibayar. Tagihan terlama harus ikut
+  /// (tidak boleh melompati tunggakan). Server membuat kode unik 3 digit
+  /// sehingga total transfer berbeda dari rumah lain.
+  Future<Payment> createPayment(List<String> billIds) async {
+    final rid = currentUser?.residentId;
+    if (isAdmin || rid == null) {
+      throw StateError('Pembayaran dilakukan oleh warga.');
     }
+    if (bankAccounts.isEmpty) {
+      throw StateError('Rekening pembayaran belum diatur pengelola.');
+    }
+    if (billIds.isEmpty) throw StateError('Pilih minimal satu tagihan.');
+    if (activePaymentOf(rid) != null) {
+      throw StateError('Masih ada pembayaran yang berjalan. Selesaikan atau '
+          'batalkan dulu.');
+    }
+    final unpaid = unpaidBillsOf(rid);
+    final selected = billIds.toSet();
+    if (!selected.every((id) => unpaid.any((b) => b.id == id))) {
+      throw StateError('Tagihan tidak ditemukan atau sudah lunas.');
+    }
+    // Harus tagihan-tagihan terlama secara berurutan.
+    final expected = unpaid.take(selected.length).map((b) => b.id).toSet();
+    if (!expected.containsAll(selected)) {
+      throw StateError('Tagihan terlama harus dibayar lebih dulu.');
+    }
+    if (!isFirebase) {
+      final now = DateTime.now();
+      final used = {
+        for (final p in payments)
+          if (p.isActiveOn(now)) p.uniqueCode,
+      };
+      final free = [for (var c = 1; c <= 999; c++) if (!used.contains(c)) c];
+      final code = free[_random.nextInt(free.length)];
+      final chosen = unpaid.where((b) => selected.contains(b.id)).toList();
+      final house = residentById(rid)?.houseNo ?? '';
+      final p = Payment(
+        id: _newId('PAY'),
+        residentId: rid,
+        billIds: [for (final b in chosen) b.id],
+        periods: [for (final b in chosen) monthKey(b.period)],
+        baseAmount: chosen.fold(0, (t, b) => t + b.amount),
+        uniqueCode: code,
+        reference: paymentReference(house, code),
+        houseNo: house,
+        residentName: residentById(rid)?.name ?? '',
+        createdAt: now,
+        expiresAt: now.add(paymentValidity),
+      );
+      payments.add(p);
+      notifyListeners();
+      return p;
+    }
+    final res = await _fn!.httpsCallable('createPayment').call<Map<String, dynamic>>({
+      'estateId': _estateId,
+      'billIds': billIds,
+    });
+    final id = res.data['paymentId'] as String;
+    // Tunggu dokumen tiba lewat listener (biasanya instan).
+    for (var i = 0; i < 20 && paymentById(id) == null; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+    }
+    return paymentById(id) ??
+        Payment.fromMap(id, (res.data['payment'] as Map).cast<String, dynamic>());
+  }
+
+  /// Warga mengunggah bukti transfer (juga untuk unggah ulang bila ditolak).
+  Future<void> submitPaymentProof(String paymentId, XFile proof) async {
+    final p = paymentById(paymentId);
+    if (p == null) throw StateError('Pembayaran tidak ditemukan.');
+    if (currentUser?.residentId != p.residentId) {
+      throw StateError('Ini bukan pembayaran rumah Anda.');
+    }
+    final now = DateTime.now();
+    if (!p.canUploadProofOn(now)) {
+      throw StateError(p.statusOn(now) == PaymentStatus.kedaluwarsa
+          ? 'Batas waktu transfer sudah lewat. Buat pembayaran baru.'
+          : 'Bukti tidak bisa diunggah pada status ini.');
+    }
+    if (!isFirebase) {
+      p
+        ..status = PaymentStatus.menungguVerifikasi
+        ..proofUrl = proof.path
+        ..submittedAt = now
+        ..note = '';
+      notifyListeners();
+      return;
+    }
+    final ref = _storage!.ref(
+        'estates/$_estateId/payments/${p.residentId}/${p.id}/bukti-${now.millisecondsSinceEpoch}.jpg');
+    await ref.putData(
+        await proof.readAsBytes(), SettableMetadata(contentType: 'image/jpeg'));
+    await _est.collection('payments').doc(p.id).update({
+      'status': PaymentStatus.menungguVerifikasi.name,
+      'proofUrl': await ref.getDownloadURL(),
+      'submittedAt': FieldValue.serverTimestamp(),
+      'note': '',
+    });
+  }
+
+  /// Warga membatalkan pembayaran yang belum diverifikasi (mis. salah pilih
+  /// tagihan). Tagihannya bisa dibayar lagi dengan kode baru.
+  Future<void> cancelPayment(String paymentId) async {
+    final p = paymentById(paymentId);
+    if (p == null) throw StateError('Pembayaran tidak ditemukan.');
+    if (currentUser?.residentId != p.residentId) {
+      throw StateError('Ini bukan pembayaran rumah Anda.');
+    }
+    if (p.status != PaymentStatus.menungguTransfer &&
+        p.status != PaymentStatus.ditolak) {
+      throw StateError('Pembayaran ini tidak bisa dibatalkan.');
+    }
+    if (!isFirebase) {
+      p.status = PaymentStatus.dibatalkan;
+      notifyListeners();
+      return;
+    }
+    await _est
+        .collection('payments')
+        .doc(p.id)
+        .update({'status': PaymentStatus.dibatalkan.name});
+  }
+
+  /// Pengelola (hak tagihan) memverifikasi transfer: semua tagihan di
+  /// dalamnya menjadi lunas.
+  Future<void> verifyPayment(String paymentId) async {
+    _require(AdminPermission.billing);
+    final p = paymentById(paymentId);
+    if (p == null || p.status != PaymentStatus.menungguVerifikasi) {
+      throw StateError('Pembayaran tidak menunggu verifikasi.');
+    }
+    if (!isFirebase) {
+      final now = DateTime.now();
+      for (final b in bills.where((b) => p.billIds.contains(b.id))) {
+        b
+          ..status = BillStatus.lunas
+          ..paidAt = now
+          ..method = 'Transfer · kode ${p.uniqueCode.toString().padLeft(3, '0')}'
+          ..paymentId = p.id;
+      }
+      p
+        ..status = PaymentStatus.diterima
+        ..reviewedAt = now
+        ..reviewedBy = currentUser?.name ?? '';
+      notifyListeners();
+      return;
+    }
+    await _fn!.httpsCallable('verifyPayment').call<void>({
+      'estateId': _estateId,
+      'paymentId': paymentId,
+    });
+  }
+
+  /// Bukti tidak valid: warga diminta mengunggah ulang (atau membatalkan).
+  Future<void> rejectPayment(String paymentId, String reason) async {
+    _require(AdminPermission.billing);
+    final p = paymentById(paymentId);
+    if (p == null || p.status != PaymentStatus.menungguVerifikasi) {
+      throw StateError('Pembayaran tidak menunggu verifikasi.');
+    }
+    if (reason.trim().isEmpty) throw StateError('Isi alasan penolakan.');
+    if (!isFirebase) {
+      p
+        ..status = PaymentStatus.ditolak
+        ..note = reason.trim()
+        ..reviewedAt = DateTime.now()
+        ..reviewedBy = currentUser?.name ?? '';
+      notifyListeners();
+      return;
+    }
+    await _est.collection('payments').doc(p.id).update({
+      'status': PaymentStatus.ditolak.name,
+      'note': reason.trim(),
+      'reviewedAt': FieldValue.serverTimestamp(),
+      'reviewedBy': currentUser?.name ?? '',
+    });
   }
 
   /// Membuat tagihan bulan berjalan untuk warga yang belum punya.
@@ -2603,6 +2824,40 @@ class EstateStore extends ChangeNotifier {
     ));
   }
 
+  /// Rekening perumahan & satu pembayaran yang menunggu verifikasi.
+  void _seedDemoPayments() {
+    bankAccounts.addAll(const [
+      BankAccount(
+          bankName: 'BCA',
+          accountNumber: '123 456 7890',
+          accountName: 'Paguyuban Warga Griya Asri'),
+      BankAccount(
+          bankName: 'Bank Mandiri',
+          accountNumber: '137 00 1234567 8',
+          accountName: 'Paguyuban Warga Griya Asri'),
+    ]);
+    // Siti (R2) sudah transfer IPL bulan ini & mengunggah bukti.
+    final siti = residentById('R2')!;
+    final bill = unpaidBillsOf(siti.id).last;
+    final created = DateTime.now().subtract(const Duration(hours: 3));
+    payments.add(Payment(
+      id: 'PAY-DEMO',
+      residentId: siti.id,
+      billIds: [bill.id],
+      periods: [monthKey(bill.period)],
+      baseAmount: bill.amount,
+      uniqueCode: 457,
+      reference: paymentReference(siti.houseNo, 457),
+      houseNo: siti.houseNo,
+      residentName: siti.name,
+      createdAt: created,
+      expiresAt: created.add(paymentValidity),
+      status: PaymentStatus.menungguVerifikasi,
+      proofUrl: '',
+      submittedAt: created.add(const Duration(minutes: 40)),
+    ));
+  }
+
   /// Tim pengelola contoh: pemilik + bendahara + satpam, dan 3 level akses.
   void _seedDemoStaff() {
     final bendahara = AdminRole(
@@ -2804,7 +3059,7 @@ class EstateStore extends ChangeNotifier {
       for (var i = 0; i < residents.length; i++) {
         final r = residents[i];
         // Bulan lalu: hampir semua lunas. Bulan ini: sebagian saja.
-        final paid = m > 0 ? r.id != 'R3' : i % 3 == 2;
+        final paid = m > 0 ? r.id != 'R3' : i % 3 == 2 && r.id != 'R3';
         bills.add(Bill(
           id: _newId('B'),
           residentId: r.id,
@@ -2954,7 +3209,9 @@ class _DemoEstate {
         ..registrations.addAll(s.registrations)
         ..members.addAll(s.members)
         ..staff.addAll(s.staff)
-        ..adminRoles.addAll(s.adminRoles);
+        ..adminRoles.addAll(s.adminRoles)
+        ..payments.addAll(s.payments)
+        ..bankAccounts.addAll(s.bankAccounts);
 
   final String name;
   final String address;
@@ -2967,6 +3224,8 @@ class _DemoEstate {
   final members = <HouseholdMember>[];
   final staff = <StaffMember>[];
   final adminRoles = <AdminRole>[];
+  final payments = <Payment>[];
+  final bankAccounts = <BankAccount>[];
   final renovations = <Renovation>[];
   final renovationLogs = <RenovationLog>[];
   final residents = <Resident>[];
@@ -3002,5 +3261,7 @@ class _DemoEstate {
     s.members.addAll(members);
     s.staff.addAll(staff);
     s.adminRoles.addAll(adminRoles);
+    s.payments.addAll(payments);
+    s.bankAccounts.addAll(bankAccounts);
   }
 }

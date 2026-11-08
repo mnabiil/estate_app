@@ -4,6 +4,7 @@ import '../models.dart';
 import '../store.dart';
 import '../utils.dart';
 import '../widgets.dart';
+import 'payments_screen.dart';
 
 class BillsScreen extends StatefulWidget {
   const BillsScreen({super.key});
@@ -12,78 +13,11 @@ class BillsScreen extends StatefulWidget {
   State<BillsScreen> createState() => _BillsScreenState();
 }
 
-const _paymentMethods = [
-  (Icons.account_balance, 'Transfer Bank (Virtual Account)'),
-  (Icons.qr_code_2, 'QRIS'),
-  (Icons.account_balance_wallet_outlined, 'E-Wallet'),
-];
-
 class _BillsScreenState extends State<BillsScreen> {
   BillStatus? _filter;
 
-  Future<void> _pay(Bill bill) async {
-    final method = await showModalBottomSheet<String>(
-      context: context,
-      showDragHandle: true,
-      builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Bayar IPL ${formatMonth(bill.period)}',
-                      style: Theme.of(ctx).textTheme.titleMedium),
-                  Text(formatRupiah(bill.amount),
-                      style: Theme.of(ctx).textTheme.headlineSmall),
-                ],
-              ),
-            ),
-            for (final (icon, name) in _paymentMethods)
-              ListTile(
-                leading: Icon(icon),
-                title: Text(name),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () => Navigator.pop(ctx, name),
-              ),
-            const SizedBox(height: 8),
-          ],
-        ),
-      ),
-    );
-    if (method == null || !mounted) return;
-    await runAction(
-      context,
-      store.payBill(bill.id, method),
-      success: 'Pembayaran IPL ${formatMonth(bill.period)} berhasil (simulasi)',
-    );
-  }
-
-  Future<void> _markPaid(Bill bill, Resident? r) async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Tandai lunas?'),
-        content: Text(
-            'IPL ${formatMonth(bill.period)} untuk ${r?.name} (${r?.houseNo}) '
-            'dibayar tunai ke pengelola.'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Batal')),
-          FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Tandai lunas')),
-        ],
-      ),
-    );
-    if (ok != true || !mounted) return;
-    await runAction(context, store.payBill(bill.id, 'Tunai'),
-        success: 'Tagihan ditandai lunas');
-  }
+  void _open(Widget screen) =>
+      Navigator.of(context).push(MaterialPageRoute(builder: (_) => screen));
 
   Future<void> _generate() async {
     final n = await runAction(context, store.generateBillsForCurrentMonth());
@@ -102,9 +36,9 @@ class _BillsScreenState extends State<BillsScreen> {
       listenable: store,
       builder: (context, _) {
         final isAdmin = store.isAdmin;
-        final rid = store.currentUser!.residentId;
+        final rid = store.currentUser!.residentId ?? '';
         var list =
-            isAdmin ? store.bills.toList() : store.billsForResident(rid!);
+            isAdmin ? store.bills.toList() : store.billsForResident(rid);
         if (_filter != null) {
           list = list.where((b) => b.status == _filter).toList();
         }
@@ -114,17 +48,64 @@ class _BillsScreenState extends State<BillsScreen> {
           appBar: AppBar(
             title: Text(isAdmin ? 'Tagihan IPL' : 'Tagihan Saya'),
             actions: [
-              if (isAdmin)
+              if (isAdmin && store.can(AdminPermission.billing)) ...[
+                IconButton(
+                  tooltip: 'Rekening pembayaran',
+                  icon: const Icon(Icons.account_balance_outlined),
+                  onPressed: () => _open(const BankAccountsScreen()),
+                ),
                 IconButton(
                   tooltip: 'Buat tagihan bulan ini',
                   icon: const Icon(Icons.post_add),
                   onPressed: _generate,
                 ),
+              ],
+              IconButton(
+                tooltip: isAdmin ? 'Pembayaran' : 'Riwayat pembayaran',
+                icon: const Icon(Icons.history),
+                onPressed: () => _open(const PaymentsScreen()),
+              ),
             ],
           ),
           body: Column(
             children: [
-              if (!isAdmin) _UnpaidBanner(total: store.unpaidTotal(rid!)),
+              if (!isAdmin) ...[
+                _UnpaidBanner(
+                  total: store.unpaidTotal(rid),
+                  onPay: () => startPaymentFlow(context),
+                ),
+                if (store.activePaymentOf(rid) case final p?)
+                  _ActivePaymentCard(
+                      payment: p,
+                      onTap: () =>
+                          _open(PaymentDetailScreen(paymentId: p.id))),
+              ] else if (store.can(AdminPermission.billing) &&
+                  store.paymentsToVerify.isNotEmpty)
+                Card(
+                  margin: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+                  color: Theme.of(context).colorScheme.tertiaryContainer,
+                  child: ListTile(
+                    leading: const Icon(Icons.fact_check_outlined),
+                    title: Text(
+                        '${store.paymentsToVerify.length} pembayaran perlu diverifikasi'),
+                    subtitle: const Text('Cocokkan dengan mutasi rekening'),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => _open(const PaymentsScreen()),
+                  ),
+                )
+              else if (store.can(AdminPermission.billing) &&
+                  store.bankAccounts.isEmpty)
+                Card(
+                  margin: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+                  color: Theme.of(context).colorScheme.errorContainer,
+                  child: ListTile(
+                    leading: const Icon(Icons.account_balance_outlined),
+                    title: const Text('Rekening pembayaran belum diatur'),
+                    subtitle: const Text('Warga belum bisa membayar IPL'),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => _open(const BankAccountsScreen()),
+                  ),
+                ),
               FilterBar<BillStatus>(
                 options: const {
                   null: 'Semua',
@@ -145,6 +126,7 @@ class _BillsScreenState extends State<BillsScreen> {
                           final b = list[i];
                           final r = store.residentById(b.residentId);
                           final paid = b.status == BillStatus.lunas;
+                          final locked = !paid && store.isBillLocked(b);
                           return ListTile(
                             title: Text(isAdmin
                                 ? '${r?.name} · ${r?.houseNo}'
@@ -154,7 +136,8 @@ class _BillsScreenState extends State<BillsScreen> {
                               paid
                                   ? 'Dibayar ${formatDate(b.paidAt!)} · ${b.method}'
                                   : 'Jatuh tempo ${formatDate(b.dueDate)}'
-                                      '${b.isOverdueOn(DateTime.now()) ? ' · terlambat' : ''}',
+                                      '${b.isOverdueOn(DateTime.now()) ? ' · terlambat' : ''}'
+                                      '${locked ? ' · dalam pembayaran' : ''}',
                             ].join('\n')),
                             isThreeLine: isAdmin,
                             trailing: Column(
@@ -169,9 +152,13 @@ class _BillsScreenState extends State<BillsScreen> {
                                 StatusChip(b.status.label, billColor(b.status)),
                               ],
                             ),
-                            onTap: paid
-                                ? null
-                                : () => isAdmin ? _markPaid(b, r) : _pay(b),
+                            onTap: b.paymentId != null
+                                ? () => _open(
+                                    PaymentDetailScreen(paymentId: b.paymentId!))
+                                : paid || isAdmin
+                                    ? null
+                                    : () => startPaymentFlow(context,
+                                        upToBillId: b.id),
                           );
                         },
                       ),
@@ -184,9 +171,33 @@ class _BillsScreenState extends State<BillsScreen> {
   }
 }
 
+class _ActivePaymentCard extends StatelessWidget {
+  const _ActivePaymentCard({required this.payment, required this.onTap});
+  final Payment payment;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final s = payment.statusOn(DateTime.now());
+    return Card(
+      margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+      child: ListTile(
+        leading: const Icon(Icons.payments_outlined),
+        title: Text('Pembayaran ${formatRupiah(payment.total)}'),
+        subtitle: Text(s == PaymentStatus.menungguTransfer
+            ? 'Transfer sebelum ${formatDateTime(payment.expiresAt)}'
+            : s.label),
+        trailing: StatusChip(s.label, paymentColor(s)),
+        onTap: onTap,
+      ),
+    );
+  }
+}
+
 class _UnpaidBanner extends StatelessWidget {
-  const _UnpaidBanner({required this.total});
+  const _UnpaidBanner({required this.total, required this.onPay});
   final int total;
+  final VoidCallback onPay;
 
   @override
   Widget build(BuildContext context) {
@@ -200,14 +211,14 @@ class _UnpaidBanner extends StatelessWidget {
         title: Text(clear ? 'Semua tagihan lunas' : 'Total belum dibayar'),
         subtitle: clear
             ? const Text('Terima kasih!')
-            : const Text('Ketuk tagihan untuk membayar'),
-        trailing: clear
-            ? null
             : Text(formatRupiah(total),
                 style: Theme.of(context)
                     .textTheme
                     .titleMedium
                     ?.copyWith(fontWeight: FontWeight.bold)),
+        trailing: clear
+            ? null
+            : FilledButton(onPressed: onPay, child: const Text('Bayar')),
       ),
     );
   }
