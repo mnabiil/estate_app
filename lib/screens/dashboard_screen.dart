@@ -68,7 +68,7 @@ class DashboardScreen extends StatelessWidget {
                 '${todayVisitors.where((v) => v.residentId == rid).length}',
                 'Tamu hari ini',
                 () => onNavigate(_tabFourth)),
-            _Stat(Icons.campaign, '${store.announcements.length}', 'Pengumuman',
+            _Stat(Icons.campaign, '${store.visibleAnnouncements.length}', 'Pengumuman',
                 () => _push(context, const AnnouncementsScreen())),
           ];
         }
@@ -191,7 +191,7 @@ class DashboardScreen extends StatelessWidget {
                   ],
                 ),
                 const SizedBox(height: 4),
-                for (final a in store.announcements.take(2))
+                for (final a in store.visibleAnnouncements.take(2))
                   Card(
                     child: ListTile(
                       leading: Container(
@@ -207,8 +207,7 @@ class DashboardScreen extends StatelessWidget {
                       title: Text(a.title),
                       subtitle: Text(a.body,
                           maxLines: 2, overflow: TextOverflow.ellipsis),
-                      onTap: () =>
-                          _push(context, const AnnouncementsScreen()),
+                      onTap: () => openAnnouncement(context, a),
                     ),
                   ),
               ],

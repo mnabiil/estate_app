@@ -657,6 +657,28 @@ class EstateStore extends ChangeNotifier {
     return res.data['tempPassword'] as String?;
   }
 
+  /// Pemilik membuat password sementara baru untuk anggota tim.
+  Future<({String email, String tempPassword})> resetStaffPassword(
+      String uid) async {
+    _requireOwner();
+    if (uid == _myUid) {
+      throw StateError('Gunakan menu Ganti password untuk akun sendiri.');
+    }
+    if (!staff.any((m) => m.id == uid)) {
+      throw StateError('Anggota tim tidak ditemukan.');
+    }
+    if (!isFirebase) {
+      throw StateError('Reset password hanya tersedia di mode Firebase.');
+    }
+    final res = await _fn!
+        .httpsCallable('resetStaffPassword')
+        .call<Map<String, dynamic>>({'estateId': _estateId, 'uid': uid});
+    return (
+      email: res.data['email'] as String,
+      tempPassword: res.data['tempPassword'] as String,
+    );
+  }
+
   /// Pemilik mengatur perumahan yang bisa diakses anggota tim.
   Future<void> setStaffEstates(String uid,
       {List<String>? estateIds, bool allEstates = false}) async {
@@ -2622,17 +2644,20 @@ class EstateStore extends ChangeNotifier {
     ..sort((a, b) => (a.submittedAt ?? a.createdAt)
         .compareTo(b.submittedAt ?? b.createdAt));
 
+  void _validateBankAccount(BankAccount a) {
+    if (a.bankName.trim().isEmpty ||
+        a.accountName.trim().isEmpty ||
+        !RegExp(r'^[0-9 .-]{5,30}$').hasMatch(a.accountNumber.trim())) {
+      throw StateError('Lengkapi nama bank, nomor & nama pemilik rekening.');
+    }
+    if (a.title.length > 60) throw StateError('Nama rekening maksimal 60 karakter.');
+  }
+
   /// Pengelola (hak tagihan): atur rekening tujuan transfer perumahan.
   Future<void> saveBankAccounts(List<BankAccount> accounts) async {
     _require(AdminPermission.billing);
     if (accounts.length > 5) throw StateError('Maksimal 5 rekening.');
-    for (final a in accounts) {
-      if (a.bankName.trim().isEmpty ||
-          a.accountName.trim().isEmpty ||
-          !RegExp(r'^[0-9 .-]{5,30}$').hasMatch(a.accountNumber.trim())) {
-        throw StateError('Lengkapi nama bank, nomor & nama pemilik rekening.');
-      }
-    }
+    accounts.forEach(_validateBankAccount);
     if (!isFirebase) {
       bankAccounts
         ..clear()
@@ -2967,35 +2992,131 @@ class EstateStore extends ChangeNotifier {
 
   // ---------- Pengumuman ----------
 
+  /// Pengumuman yang tampil: pengelola melihat semua (termasuk yang sudah
+  /// berakhir), warga hanya yang masih berlaku. Terbaru di atas.
+  List<Announcement> get visibleAnnouncements {
+    final now = DateTime.now();
+    return [
+      for (final a in announcements)
+        if (isAdmin || a.isActiveOn(now)) a
+    ]..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+  }
+
+  Announcement? announcementById(String id) =>
+      announcements.where((a) => a.id == id).firstOrNull;
+
   /// Pengelola membuat pengumuman untuk satu atau beberapa perumahan
-  /// (default: perumahan aktif). Hak "pengumuman" dicek per perumahan.
+  /// (default: perumahan aktif), opsional dengan foto & batas berlaku.
   Future<void> addAnnouncement(String title, String body,
-      {List<String>? estateIds}) async {
+      {List<String>? estateIds, DateTime? until, XFile? photo}) async {
     _require(AdminPermission.announcements);
+    title = title.trim();
+    body = body.trim();
+    if (title.isEmpty) throw StateError('Judul wajib diisi.');
+    if (title.length > 120) throw StateError('Judul maksimal 120 karakter.');
+    if (body.length > 5000) throw StateError('Isi maksimal 5000 karakter.');
+    if (until != null && dateOnly(until).isBefore(dateOnly(DateTime.now()))) {
+      throw StateError('Tanggal berakhir tidak boleh sebelum hari ini.');
+    }
     final all = [for (final e in estates) e.id];
     final targets = [
       for (final id in (estateIds ?? [_estateId!])) if (all.contains(id)) id
     ];
     if (targets.isEmpty) throw StateError('Pilih minimal satu perumahan.');
+    final by = currentUser?.name ?? '';
     if (!isFirebase) {
       for (final id in targets) {
         final a = Announcement(
             id: _newId('P'),
             title: title,
             body: body,
-            createdAt: DateTime.now());
+            createdAt: DateTime.now(),
+            photoUrl: photo?.path,
+            until: until == null ? null : dateOnly(until),
+            createdBy: by);
         (id == _estateId ? announcements : _demoSnapshot(id).announcements)
             .insert(0, a);
       }
       notifyListeners();
       return;
     }
+    String? photoUrl;
+    if (photo != null) {
+      photoUrl = await _uploadFile(
+          'estates/$_estateId/announcements/${DateTime.now().millisecondsSinceEpoch}.jpg',
+          photo,
+          contentType: 'image/jpeg');
+    }
     final batch = _db!.batch();
     for (final id in targets) {
       batch.set(_db!.collection('estates').doc(id).collection('announcements').doc(), {
         'title': title,
         'body': body,
+        if (photoUrl != null) 'photoUrl': photoUrl,
+        if (until != null) 'until': dayKey(until),
+        'createdBy': by,
         'createdAt': FieldValue.serverTimestamp(),
+      });
+    }
+    await batch.commit();
+  }
+
+  /// Pengelola (hak pengumuman) menghapus pengumuman.
+  Future<void> deleteAnnouncement(String id) async {
+    _require(AdminPermission.announcements);
+    if (!isFirebase) {
+      announcements.removeWhere((a) => a.id == id);
+      notifyListeners();
+      return;
+    }
+    await _est.collection('announcements').doc(id).delete();
+  }
+
+  /// Nominal deposit ijin renovasi (kecil/ringan & besar/berat). Bisa diatur
+  /// pengelola dengan hak master data atau ijin renovasi.
+  Future<void> setRenovationDeposits(int small, int large) async {
+    if (!can(AdminPermission.renovations) && !can(AdminPermission.masterData)) {
+      _require(AdminPermission.renovations);
+    }
+    if (small <= 0 || large <= 0) {
+      throw StateError('Deposit harus lebih dari 0.');
+    }
+    if (!isFirebase) {
+      depositSmall = small;
+      depositLarge = large;
+      notifyListeners();
+      return;
+    }
+    await _est.update({
+      'renovationDepositSmall': small,
+      'renovationDepositLarge': large,
+    });
+  }
+
+  /// Tambah rekening ke satu atau beberapa perumahan sekaligus.
+  Future<void> addBankAccount(BankAccount account, List<String> estateIds) async {
+    _require(AdminPermission.billing);
+    _validateBankAccount(account);
+    final targets = [
+      for (final e in estates) if (estateIds.contains(e.id)) e.id
+    ];
+    if (targets.isEmpty) throw StateError('Pilih minimal satu perumahan.');
+    if (!isFirebase) {
+      for (final id in targets) {
+        final list =
+            id == _estateId ? bankAccounts : _demoSnapshot(id).bankAccounts;
+        if (list.length >= 5) {
+          throw StateError('${estateNameOf(id)} sudah punya 5 rekening.');
+        }
+        list.add(account);
+      }
+      notifyListeners();
+      return;
+    }
+    final batch = _db!.batch();
+    for (final id in targets) {
+      batch.update(_db!.collection('estates').doc(id), {
+        'bankAccounts': FieldValue.arrayUnion([account.toMap()]),
       });
     }
     await batch.commit();

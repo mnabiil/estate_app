@@ -128,6 +128,13 @@ service cloud.firestore {
           && onlyChanges(['bankAccounts'])
           && request.resource.data.bankAccounts is list
           && request.resource.data.bankAccounts.size() <= 5)
+        // Nominal deposit renovasi: juga oleh pengelola berhak ijin renovasi.
+        || (can(estateId, 'renovations')
+          && onlyChanges(['renovationDepositSmall', 'renovationDepositLarge'])
+          && request.resource.data.renovationDepositSmall is int
+          && request.resource.data.renovationDepositSmall > 0
+          && request.resource.data.renovationDepositLarge is int
+          && request.resource.data.renovationDepositLarge > 0)
         || (can(estateId, 'masterData')
         && onlyChanges(['name', 'address', 'monthlyFee',
           'renovationDepositSmall', 'renovationDepositLarge',
@@ -453,6 +460,18 @@ service cloud.firestore {
       match /announcements/{announcementId} {
         allow read: if inEstate(estateId);
         allow create: if can(estateId, 'announcements')
+          && request.resource.data.keys().hasOnly(['title', 'body', 'photoUrl',
+            'until', 'createdBy', 'createdAt'])
+          && request.resource.data.title is string
+          && request.resource.data.title.size() > 0
+          && request.resource.data.title.size() <= 120
+          && request.resource.data.body is string
+          && request.resource.data.body.size() <= 5000
+          && (!('photoUrl' in request.resource.data)
+            || (request.resource.data.photoUrl is string
+              && request.resource.data.photoUrl.size() <= 2000))
+          && (!('until' in request.resource.data)
+            || request.resource.data.until.matches('[0-9]{4}-[0-9]{2}-[0-9]{2}'))
           && request.resource.data.createdAt == request.time;
         allow update, delete: if can(estateId, 'announcements');
       }

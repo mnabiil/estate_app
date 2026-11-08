@@ -51,6 +51,52 @@ class RenovationsScreen extends StatefulWidget {
 enum _Filter { aktif, selesai, semua }
 
 class _RenovationsScreenState extends State<RenovationsScreen> {
+  /// Pengelola mengatur nominal deposit renovasi kecil (ringan) & besar (berat).
+  Future<void> _editDeposits() async {
+    final small = TextEditingController(text: '${store.depositSmall}');
+    final large = TextEditingController(text: '${store.depositLarge}');
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Nominal deposit renovasi'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('Berlaku untuk pengajuan baru di $estateName.',
+                style: Theme.of(ctx).textTheme.bodySmall),
+            const SizedBox(height: 8),
+            TextField(
+              controller: small,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                  labelText: 'Renovasi kecil / ringan', prefixText: 'Rp '),
+            ),
+            TextField(
+              controller: large,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                  labelText: 'Renovasi besar / berat', prefixText: 'Rp '),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Batal')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Simpan')),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    int parse(TextEditingController c) =>
+        int.tryParse(c.text.replaceAll(RegExp(r'[^0-9]'), '')) ?? 0;
+    await runAction(
+        context, store.setRenovationDeposits(parse(small), parse(large)),
+        success: 'Nominal deposit disimpan');
+  }
+
   _Filter _filter = _Filter.aktif;
 
   @override
@@ -73,7 +119,18 @@ class _RenovationsScreenState extends State<RenovationsScreen> {
             .any((r) => r.residentId == rid && r.isActive);
 
         return Scaffold(
-          appBar: AppBar(title: const Text('Ijin Renovasi')),
+          appBar: AppBar(
+            title: const Text('Ijin Renovasi'),
+            actions: [
+              if (store.can(AdminPermission.renovations) ||
+                  store.can(AdminPermission.masterData))
+                IconButton(
+                  tooltip: 'Atur nominal deposit',
+                  icon: const Icon(Icons.tune),
+                  onPressed: _editDeposits,
+                ),
+            ],
+          ),
           floatingActionButton: isAdmin || hasActive
               ? null
               : FloatingActionButton.extended(

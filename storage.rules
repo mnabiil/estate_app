@@ -66,6 +66,17 @@ service firebase.storage {
       allow update, delete: if false;
     }
 
+    // Foto pengumuman: diunggah pengelola, bisa dilihat semua pengguna yang
+    // login (pengumuman bisa dikirim ke beberapa perumahan sekaligus).
+    match /estates/{estateId}/announcements/{fileName} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null
+        && adminOf(estateId)
+        && request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+      allow update, delete: if false;
+    }
+
     match /estates/{estateId}/complaints/{residentId}/{complaintId}/{fileName} {
       allow read: if request.auth != null
         && (adminOf(estateId)
