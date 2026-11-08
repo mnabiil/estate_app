@@ -41,6 +41,16 @@ android {
     }
 }
 
+// firebase-storage ikut membawa SDK App Check lengkap. Tanpa provider yang
+// dipasang, SDK itu mengirim token placeholder yang tidak valid, dan Cloud
+// Functions (callable) menolak setiap panggilan dengan "AppCheck token was
+// rejected". Aplikasi belum memakai App Check, jadi modulnya dikeluarkan;
+// antarmuka interop yang dipakai Storage/Functions tetap ada.
+// Hapus baris ini bila nanti App Check (Play Integrity) dipasang dengan benar.
+configurations.configureEach {
+    exclude(group = "com.google.firebase", module = "firebase-appcheck")
+}
+
 kotlin {
     compilerOptions {
         jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
