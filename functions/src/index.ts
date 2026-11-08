@@ -9,7 +9,7 @@
  *  - approveRegistration (callable)  pengelola menyetujui pendaftaran -> akun jadi warga
  *  - addHouseholdMember / removeHouseholdMember (callable)
  *                                    akun anggota rumah (keluarga/penyewa)
- *  - addStaff / setStaffEstates / removeStaff (callable) pemilik mengelola tim
+ *  - addStaff / setStaffEstates / removeStaff / resetStaffPassword (callable) pemilik mengelola tim
  *                                    pengelola & akses ke beberapa/semua perumahan
  *  - resetResidentPassword (callable) pengelola membuat password sementara baru
  *                                    untuk warga yang lupa password
@@ -1473,6 +1473,41 @@ export const setStaffEstates = onCall(async (req) => {
   await batch.commit();
   await syncStaffEstateIds(uid, estateIds);
   return { ok: true };
+});
+
+/**
+ * Pemilik membuat password sementara baru untuk anggota tim (mis. satpam
+ * yang lupa password, atau akun lama yang ditambahkan tanpa password baru).
+ * Sesi lama dikeluarkan; wajib ganti password saat login berikutnya.
+ */
+export const resetStaffPassword = onCall(async (req) => {
+  const me = await profileOf(req.auth?.uid);
+  const data = req.data ?? {};
+  const estateId = requireText(data.estateId, "estateId");
+  const uid = requireText(data.uid, "uid");
+  await requireOwner(me, estateId);
+  if (uid === me.uid) {
+    throw new HttpsError("failed-precondition", "Gunakan menu Ganti password untuk akun sendiri.");
+  }
+  const staff = await db.doc(`estates/${estateId}/staff/${uid}`).get();
+  if (!staff.exists) throw new HttpsError("not-found", "Anggota tim tidak ditemukan.");
+  const profile = await db.doc(`users/${uid}`).get();
+  if (!profile.exists || profile.get("role") !== "pengelola") {
+    throw new HttpsError("permission-denied", "Akun ini bukan pengelola.");
+  }
+  const tempPassword = randomBytes(9).toString("base64url");
+  try {
+    await getAuth().updateUser(uid, { password: tempPassword });
+  } catch (e: unknown) {
+    if ((e as { code?: string }).code === "auth/user-not-found") {
+      throw new HttpsError("not-found", "Akun login anggota ini sudah tidak ada.");
+    }
+    throw e;
+  }
+  await getAuth().revokeRefreshTokens(uid);
+  await profile.ref.update({ mustChangePassword: true });
+  const user = await getAuth().getUser(uid);
+  return { email: user.email ?? "", tempPassword };
 });
 
 /** Mengeluarkan anggota tim dari perumahan (akun tetap ada bila masih

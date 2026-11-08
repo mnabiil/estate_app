@@ -78,7 +78,12 @@ class _TeamTab extends StatelessWidget {
     }
     if (failed || !context.mounted) return;
     if (tempPassword == null) {
-      showSnack(context, '${input.name} ditambahkan ke tim');
+      showSnack(
+          context,
+          store.isFirebase
+              ? '${input.name} ditambahkan. Email ini sudah punya akun; bila '
+                  'lupa password pakai menu "Buat password sementara".'
+              : '${input.name} ditambahkan ke tim');
       return;
     }
     await showDialog<void>(
@@ -147,6 +152,54 @@ class _TeamTab extends StatelessWidget {
     await runAction(
         context, store.setStaffRole(m.id, picked.isEmpty ? null : picked),
         success: 'Level ${m.name} diperbarui');
+  }
+
+  Future<void> _resetPassword(BuildContext context, StaffMember m) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Buat password sementara untuk ${m.name}?'),
+        content: const Text('Password lama tidak berlaku lagi dan semua sesi '
+            'login dikeluarkan. Wajib diganti saat login berikutnya.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Batal')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Buat password')),
+        ],
+      ),
+    );
+    if (ok != true || !context.mounted) return;
+    final res = await runAction(context, store.resetStaffPassword(m.id));
+    if (res == null || !context.mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Password sementara ${m.name}'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Email: ${res.email}'),
+            const SizedBox(height: 8),
+            SelectableText(res.tempPassword,
+                style: Theme.of(ctx)
+                    .textTheme
+                    .titleLarge
+                    ?.copyWith(fontFamily: 'monospace')),
+            const SizedBox(height: 12),
+            const Text('Berikan secara pribadi. Wajib diganti saat login.'),
+          ],
+        ),
+        actions: [
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Selesai')),
+        ],
+      ),
+    );
   }
 
   Future<void> _editEstates(BuildContext context, StaffMember m) async {
@@ -269,6 +322,7 @@ class _TeamTab extends StatelessWidget {
                         onSelected: (v) => switch (v) {
                           'role' => _changeRole(context, m),
                           'estates' => _editEstates(context, m),
+                          'password' => _resetPassword(context, m),
                           _ => _remove(context, m),
                         },
                         itemBuilder: (_) => [
@@ -278,6 +332,9 @@ class _TeamTab extends StatelessWidget {
                             const PopupMenuItem(
                                 value: 'estates',
                                 child: Text('Akses perumahan')),
+                          const PopupMenuItem(
+                              value: 'password',
+                              child: Text('Buat password sementara')),
                           const PopupMenuItem(
                               value: 'remove', child: Text('Keluarkan')),
                         ],

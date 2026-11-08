@@ -16,8 +16,13 @@ import 'visitors_screen.dart';
 class AccountScreen extends StatelessWidget {
   const AccountScreen({super.key});
 
+  // Dengarkan store agar nama perumahan / rumah aktif & menu ikut berubah
+  // saat perumahan atau rumah diganti.
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => ListenableBuilder(
+      listenable: store, builder: (context, _) => _build(context));
+
+  Widget _build(BuildContext context) {
     final user = store.currentUser!;
     final resident = store.currentResident;
     final theme = Theme.of(context);

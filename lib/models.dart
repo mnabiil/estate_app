@@ -473,6 +473,9 @@ class Announcement {
     required this.title,
     required this.body,
     required this.createdAt,
+    this.photoUrl,
+    this.until,
+    this.createdBy = '',
   });
 
   final String id;
@@ -480,12 +483,24 @@ class Announcement {
   final String body;
   final DateTime createdAt;
 
+  /// Foto sampul (URL Storage, atau path lokal di mode demo).
+  final String? photoUrl;
+
+  /// Berlaku sampai tanggal ini (inklusif). Null = tanpa batas.
+  final DateTime? until;
+  final String createdBy;
+
+  bool isActiveOn(DateTime now) => until == null || !dateOnly(now).isAfter(until!);
+
   factory Announcement.fromMap(String id, Map<String, dynamic> m) =>
       Announcement(
         id: id,
         title: m['title'] as String? ?? '',
         body: m['body'] as String? ?? '',
         createdAt: _date(m['createdAt']) ?? DateTime.now(),
+        photoUrl: m['photoUrl'] as String?,
+        until: m['until'] is String ? parseKey(m['until'] as String) : null,
+        createdBy: m['createdBy'] as String? ?? '',
       );
 }
 
@@ -1105,11 +1120,17 @@ class BankAccount {
     required this.bankName,
     required this.accountNumber,
     required this.accountName,
+    this.title = '',
   });
 
   final String bankName;
   final String accountNumber;
+
+  /// Nama pemilik rekening (atas nama).
   final String accountName;
+
+  /// Nama/keterangan rekening, mis. "Rekening IPL" (opsional).
+  final String title;
 
   String get label => '$bankName $accountNumber a.n. $accountName';
 
@@ -1117,12 +1138,14 @@ class BankAccount {
         'bankName': bankName,
         'accountNumber': accountNumber,
         'accountName': accountName,
+        if (title.isNotEmpty) 'title': title,
       };
 
   factory BankAccount.fromMap(Map<String, dynamic> m) => BankAccount(
         bankName: m['bankName'] as String? ?? '',
         accountNumber: m['accountNumber'] as String? ?? '',
         accountName: m['accountName'] as String? ?? '',
+        title: m['title'] as String? ?? '',
       );
 
   static List<BankAccount> listFrom(Object? v) => [

@@ -77,6 +77,13 @@ Level akses disalin ke tiap perumahan. Pengelola memilih perumahan aktif di **Ak
 `firestore.rules` (`can(estateId, perm)`) dan Cloud Functions. Pengelola lama yang belum tercatat
 di `staff` dianggap pemilik.
 
+## Pengumuman
+
+Pengelola (hak pengumuman) membuat pengumuman dengan **foto sampul**, **tanggal berakhir**
+(opsional) dan pilihan **perumahan tujuan**. Daftar tampil seperti portal berita; ketuk untuk
+membaca versi artikel. Warga hanya melihat pengumuman yang masih berlaku; pengelola melihat
+semua dan bisa **menghapus**. Foto: `estates/{estateId}/announcements/`.
+
 ## Satu akun, beberapa rumah
 
 Satu akun warga bisa punya beberapa unit di satu atau beberapa perumahan. Pengelola cukup
@@ -219,7 +226,7 @@ users/{uid}                      { estateId, estateIds?, role: warga|pengelola|p
                                    mustChangePassword?, householdRole?: anggota, relation? }
 estates/{estateId}               { name, address, monthlyFee, billDueDay (1–28), renovationDepositSmall,
                                    renovationDepositLarge, registrationOpen,
-                                   bankAccounts[{bankName, accountNumber, accountName}] }
+                                   bankAccounts[{title?, bankName, accountNumber, accountName}] }
   staff/{uid}                    { name, email, phone, isOwner, roleId, roleName, permissions[],
                                    allEstates, estateIds[] }
   adminRoles/{id}                { name, permissions[] }
@@ -240,7 +247,7 @@ estates/{estateId}               { name, address, monthlyFee, billDueDay (1–28
                                    submittedAt, note, reviewedAt, reviewedBy }
   complaints/{id}                { residentId, title, description, category, status, photoUrls, createdAt }
   visitors/{id}                  { residentId, name, purpose, visitDate, code, checkedInAt }
-  announcements/{id}             { title, body, createdAt }
+  announcements/{id}             { title, body, photoUrl?, until? ("YYYY-MM-DD"), createdBy, createdAt }
   renovations/{id}               { residentId, type: kecil|besar, description, contractor, contractorPhone,
                                    startDate, endDate ("YYYY-MM-DD"), deposit, attachments[{name,url,size}],
                                    status, depositStatus, depositMethod, depositProofUrl,

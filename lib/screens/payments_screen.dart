@@ -390,7 +390,10 @@ class PaymentDetailScreen extends StatelessWidget {
                     child: ListTile(
                       leading: const Icon(Icons.account_balance),
                       title: Text('${a.bankName} · ${a.accountNumber}'),
-                      subtitle: Text('a.n. ${a.accountName}'),
+                      subtitle: Text([
+                        'a.n. ${a.accountName}',
+                        if (a.title.isNotEmpty) a.title,
+                      ].join(' · ')),
                       trailing: IconButton(
                         tooltip: 'Salin nomor rekening',
                         icon: const Icon(Icons.copy),
@@ -579,127 +582,199 @@ class _PaymentsScreenState extends State<PaymentsScreen> {
   }
 }
 
-/// Pengelola (hak tagihan): rekening tujuan transfer perumahan.
-class BankAccountsScreen extends StatefulWidget {
+/// Pengelola (hak tagihan): rekening tujuan transfer perumahan. Rekening
+/// baru bisa sekaligus ditambahkan ke beberapa perumahan.
+class BankAccountsScreen extends StatelessWidget {
   const BankAccountsScreen({super.key});
 
-  @override
-  State<BankAccountsScreen> createState() => _BankAccountsScreenState();
-}
+  Future<void> _edit(BuildContext context, [int? index]) async {
+    final old = index == null ? null : store.bankAccounts[index];
+    final result = await showDialog<(BankAccount, Set<String>)>(
+      context: context,
+      builder: (_) => _BankAccountDialog(old: old),
+    );
+    if (result == null || !context.mounted) return;
+    final (account, estates) = result;
+    if (index == null) {
+      await runAction(context, store.addBankAccount(account, estates.toList()),
+          success: estates.length > 1
+              ? 'Rekening ditambahkan ke ${estates.length} perumahan'
+              : 'Rekening ditambahkan');
+    } else {
+      final list = store.bankAccounts.toList()..[index] = account;
+      await runAction(context, store.saveBankAccounts(list),
+          success: 'Rekening diperbarui');
+    }
+  }
 
-class _BankAccountsScreenState extends State<BankAccountsScreen> {
-  late final List<BankAccount> _accounts = store.bankAccounts.toList();
-  bool _dirty = false;
-
-  Future<void> _edit([int? index]) async {
-    final old = index == null ? null : _accounts[index];
-    final bank = TextEditingController(text: old?.bankName);
-    final number = TextEditingController(text: old?.accountNumber);
-    final name = TextEditingController(text: old?.accountName ?? estateName);
-    final result = await showDialog<BankAccount>(
+  Future<void> _delete(BuildContext context, int index) async {
+    final a = store.bankAccounts[index];
+    final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text(old == null ? 'Tambah rekening' : 'Ubah rekening'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                  controller: bank,
-                  decoration: const InputDecoration(
-                      labelText: 'Bank', hintText: 'mis. BCA')),
-              TextField(
-                  controller: number,
-                  keyboardType: TextInputType.number,
-                  decoration:
-                      const InputDecoration(labelText: 'Nomor rekening')),
-              TextField(
-                  controller: name,
-                  decoration: const InputDecoration(labelText: 'Atas nama')),
-            ],
-          ),
-        ),
+        title: const Text('Hapus rekening?'),
+        content: Text('${a.bankName} ${a.accountNumber} tidak lagi tampil '
+            'sebagai tujuan transfer di $estateName.'),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(ctx), child: const Text('Batal')),
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Batal')),
           FilledButton(
-            onPressed: () => Navigator.pop(
-                ctx,
-                BankAccount(
-                    bankName: bank.text.trim(),
-                    accountNumber: number.text.trim(),
-                    accountName: name.text.trim())),
-            child: const Text('Simpan'),
-          ),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Hapus')),
         ],
       ),
     );
-    if (result == null) return;
-    setState(() {
-      if (index == null) {
-        _accounts.add(result);
-      } else {
-        _accounts[index] = result;
-      }
-      _dirty = true;
-    });
-  }
-
-  Future<void> _save() async {
-    final ok = await runAction(
-        context, store.saveBankAccounts(_accounts).then((_) => true),
-        success: 'Rekening disimpan');
-    if (ok == true && mounted) setState(() => _dirty = false);
+    if (ok != true || !context.mounted) return;
+    final list = store.bankAccounts.toList()..removeAt(index);
+    await runAction(context, store.saveBankAccounts(list),
+        success: 'Rekening dihapus');
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Rekening pembayaran'),
-        actions: [
-          TextButton(
-              onPressed: _dirty ? _save : null, child: const Text('Simpan')),
-        ],
-      ),
-      floatingActionButton: _accounts.length >= 5
-          ? null
-          : FloatingActionButton.extended(
-              onPressed: _edit,
-              icon: const Icon(Icons.add),
-              label: const Text('Rekening'),
-            ),
-      body: ListView(
-        padding: const EdgeInsets.only(bottom: 88),
-        children: [
-          const Padding(
-            padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
-            child: Text(
-                'Warga membayar IPL hanya lewat transfer ke rekening berikut. '
-                'Setiap pembayaran diberi kode unik 3 digit sehingga transfer '
-                'tiap rumah mudah dikenali di mutasi rekening.'),
-          ),
-          if (_accounts.isEmpty)
-            const EmptyState(
-                icon: Icons.account_balance,
-                message: 'Belum ada rekening. Warga belum bisa membayar.'),
-          for (var i = 0; i < _accounts.length; i++)
-            ListTile(
-              leading: const Icon(Icons.account_balance),
-              title: Text('${_accounts[i].bankName} · ${_accounts[i].accountNumber}'),
-              subtitle: Text('a.n. ${_accounts[i].accountName}'),
-              onTap: () => _edit(i),
-              trailing: IconButton(
-                tooltip: 'Hapus',
-                icon: const Icon(Icons.delete_outline),
-                onPressed: () => setState(() {
-                  _accounts.removeAt(i);
-                  _dirty = true;
-                }),
+    return ListenableBuilder(
+      listenable: store,
+      builder: (context, _) {
+        final accounts = store.bankAccounts;
+        return Scaffold(
+          appBar: AppBar(title: const Text('Rekening pembayaran')),
+          floatingActionButton: accounts.length >= 5
+              ? null
+              : FloatingActionButton.extended(
+                  onPressed: () => _edit(context),
+                  icon: const Icon(Icons.add),
+                  label: const Text('Rekening'),
+                ),
+          body: ListView(
+            padding: const EdgeInsets.only(bottom: 88),
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                child: Text(
+                    'Rekening $estateName. Warga membayar IPL hanya lewat '
+                    'transfer ke rekening berikut. Setiap pembayaran diberi '
+                    'kode unik 3 digit sehingga transfer tiap rumah mudah '
+                    'dikenali di mutasi rekening.'),
               ),
-            ),
-        ],
+              if (accounts.isEmpty)
+                const EmptyState(
+                    icon: Icons.account_balance,
+                    message: 'Belum ada rekening. Warga belum bisa membayar.'),
+              for (var i = 0; i < accounts.length; i++)
+                Card(
+                  margin: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+                  child: ListTile(
+                    leading: const Icon(Icons.account_balance),
+                    title: Text(accounts[i].title.isNotEmpty
+                        ? accounts[i].title
+                        : accounts[i].bankName),
+                    subtitle: Text([
+                      if (accounts[i].title.isNotEmpty) accounts[i].bankName,
+                      accounts[i].accountNumber,
+                      'a.n. ${accounts[i].accountName}',
+                    ].join(' · ')),
+                    onTap: () => _edit(context, i),
+                    trailing: IconButton(
+                      tooltip: 'Hapus',
+                      icon: const Icon(Icons.delete_outline),
+                      onPressed: () => _delete(context, i),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _BankAccountDialog extends StatefulWidget {
+  const _BankAccountDialog({this.old});
+  final BankAccount? old;
+
+  @override
+  State<_BankAccountDialog> createState() => _BankAccountDialogState();
+}
+
+class _BankAccountDialogState extends State<_BankAccountDialog> {
+  late final _title = TextEditingController(text: widget.old?.title);
+  late final _bank = TextEditingController(text: widget.old?.bankName);
+  late final _number = TextEditingController(text: widget.old?.accountNumber);
+  late final _name =
+      TextEditingController(text: widget.old?.accountName ?? estateName);
+  Set<String> _estates = {
+    if (store.activeEstateId != null) store.activeEstateId!
+  };
+
+  @override
+  void dispose() {
+    _title.dispose();
+    _bank.dispose();
+    _number.dispose();
+    _name.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final adding = widget.old == null;
+    return AlertDialog(
+      title: Text(adding ? 'Tambah rekening' : 'Ubah rekening'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            TextField(
+                controller: _title,
+                maxLength: 60,
+                decoration: const InputDecoration(
+                    labelText: 'Nama rekening (opsional)',
+                    hintText: 'mis. Rekening IPL Cluster A')),
+            TextField(
+                controller: _bank,
+                decoration: const InputDecoration(
+                    labelText: 'Nama bank', hintText: 'mis. BCA')),
+            TextField(
+                controller: _number,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(labelText: 'Nomor rekening')),
+            TextField(
+                controller: _name,
+                decoration: const InputDecoration(
+                    labelText: 'Nama pemilik rekening (atas nama)')),
+            if (adding && store.estates.length > 1) ...[
+              const SizedBox(height: 16),
+              Text('Tambahkan ke perumahan',
+                  style: Theme.of(context).textTheme.labelLarge),
+              EstateChecklist(
+                selected: _estates,
+                onChanged: (v) => setState(() => _estates = v),
+              ),
+            ],
+          ],
+        ),
       ),
+      actions: [
+        TextButton(
+            onPressed: () => Navigator.pop(context), child: const Text('Batal')),
+        FilledButton(
+          onPressed: _estates.isEmpty
+              ? null
+              : () => Navigator.pop(context, (
+                    BankAccount(
+                      title: _title.text.trim(),
+                      bankName: _bank.text.trim(),
+                      accountNumber: _number.text.trim(),
+                      accountName: _name.text.trim(),
+                    ),
+                    _estates,
+                  )),
+          child: const Text('Simpan'),
+        ),
+      ],
     );
   }
 }
