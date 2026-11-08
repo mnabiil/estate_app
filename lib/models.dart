@@ -978,6 +978,10 @@ class AdminRole {
         id: id,
         name: m['name'] as String? ?? '',
         permissions: AdminPermission.parse(m['permissions']),
+        allEstates: m['allEstates'] == true,
+        estateIds: [
+          for (final e in (m['estateIds'] as List<dynamic>? ?? const [])) '$e'
+        ],
       );
 }
 
@@ -993,6 +997,8 @@ class StaffMember {
     this.roleId,
     this.roleName = '',
     this.permissions = const {},
+    this.allEstates = false,
+    this.estateIds = const [],
   });
 
   final String id;
@@ -1000,6 +1006,12 @@ class StaffMember {
   String email;
   String phone;
   bool isOwner;
+
+  /// Akses ke semua perumahan pemilik, termasuk perumahan yang dibuat nanti.
+  bool allEstates;
+
+  /// Perumahan yang bisa diakses anggota ini (dijaga Cloud Functions).
+  List<String> estateIds;
   String? roleId;
   String roleName;
   Set<AdminPermission> permissions;

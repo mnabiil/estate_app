@@ -282,3 +282,98 @@ Future<void> pickActiveEstate(BuildContext context) async {
   await runAction(context, store.switchEstate(id),
       success: 'Sekarang mengelola $name');
 }
+
+/// Daftar centang perumahan yang dikelola akun ini. Bila [onAllChanged]
+/// diisi, tampil opsi "Semua perumahan" (termasuk yang dibuat nanti).
+class EstateChecklist extends StatelessWidget {
+  const EstateChecklist({
+    super.key,
+    required this.selected,
+    required this.onChanged,
+    this.all = false,
+    this.onAllChanged,
+  });
+
+  final Set<String> selected;
+  final ValueChanged<Set<String>> onChanged;
+  final bool all;
+  final ValueChanged<bool>? onAllChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final estates = store.estates;
+    final everyChecked = estates.every((e) => selected.contains(e.id));
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (onAllChanged != null)
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            value: all,
+            onChanged: onAllChanged,
+            title: const Text('Semua perumahan'),
+            subtitle: const Text('Termasuk perumahan yang ditambahkan nanti'),
+          )
+        else
+          CheckboxListTile(
+            contentPadding: EdgeInsets.zero,
+            value: everyChecked,
+            onChanged: (v) => onChanged(
+                v == true ? {for (final e in estates) e.id} : <String>{}),
+            title: const Text('Semua perumahan'),
+          ),
+        for (final e in estates)
+          CheckboxListTile(
+            contentPadding: const EdgeInsets.only(left: 16),
+            dense: true,
+            value: all || selected.contains(e.id),
+            onChanged: all
+                ? null
+                : (v) => onChanged(v == true
+                    ? {...selected, e.id}
+                    : ({...selected}..remove(e.id))),
+            title: Text(e.id == store.activeEstateId
+                ? '${e.name} (aktif)'
+                : e.name),
+          ),
+      ],
+    );
+  }
+}
+
+/// Pengelola: peringatan bila sebagian data gagal dimuat (mis. ditolak
+/// aturan keamanan atau dokumen rusak), dengan rincian yang bisa disalin.
+class SyncProblemsCard extends StatelessWidget {
+  const SyncProblemsCard({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final problems = store.syncProblems;
+    if (problems.isEmpty) return const SizedBox.shrink();
+    final scheme = Theme.of(context).colorScheme;
+    return Card(
+      margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+      color: scheme.errorContainer,
+      child: ListTile(
+        leading: const Icon(Icons.sync_problem),
+        title: Text('${problems.length} masalah saat memuat data'),
+        subtitle: const Text('Sebagian data mungkin tidak tampil. Ketuk untuk rincian.'),
+        onTap: () => showDialog<void>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('Masalah memuat data'),
+            content: SingleChildScrollView(
+              child: SelectableText(problems.join('\n\n')),
+            ),
+            actions: [
+              FilledButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('Tutup')),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}

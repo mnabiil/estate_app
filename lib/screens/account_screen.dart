@@ -50,6 +50,7 @@ class AccountScreen extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 24),
+          if (store.isAdmin) const SyncProblemsCard(),
           if (store.isAdmin)
             ListTile(
               leading: const Icon(Icons.location_city_outlined),
