@@ -168,6 +168,15 @@ class _TeamTab extends StatelessWidget {
       ),
     );
     if (picked == null || !context.mounted) return;
+    final newRole = picked.isEmpty ? null : store.adminRoleById(picked);
+    final ok = await confirmSave(context,
+        title: 'Ganti level ${m.name}?',
+        details: {
+          'Level lama': m.levelLabel,
+          'Level baru': newRole?.name ?? 'Pemilik (akses penuh)',
+          if (newRole != null) 'Hak akses': _permSummary(newRole.permissions),
+        });
+    if (!ok || !context.mounted) return;
     await runAction(
         context, store.setStaffRole(m.id, picked.isEmpty ? null : picked),
         success: 'Level ${m.name} diperbarui');
@@ -249,6 +258,14 @@ class _TeamTab extends StatelessWidget {
       ),
     );
     if (ok != true || !context.mounted) return;
+    final confirmed = await confirmSave(context,
+        title: 'Simpan akses perumahan ${m.name}?',
+        details: {
+          'Akses': all
+              ? 'Semua perumahan (termasuk yang baru)'
+              : [for (final id in selected) store.estateNameOf(id)].join(', '),
+        });
+    if (!confirmed || !context.mounted) return;
     await runAction(
         context,
         store.setStaffEstates(m.id,

@@ -95,11 +95,23 @@ class VisitorsScreen extends StatelessWidget {
                                 Colors.green.shade600)
                             : store.can(AdminPermission.visitors)
                                 ? FilledButton.tonal(
-                                    onPressed: () => runAction(
-                                      context,
-                                      store.checkInVisitor(v.id),
-                                      success: '${v.name} sudah masuk',
-                                    ),
+                                    onPressed: () async {
+                                      final ok = await confirmSave(context,
+                                          title: 'Check-in tamu?',
+                                          details: {
+                                            'Tamu': v.name,
+                                            'Keperluan': v.purpose,
+                                            'Tujuan':
+                                                '${host?.name ?? ''} (${host?.houseNo ?? ''})',
+                                          },
+                                          action: 'Ya, check-in');
+                                      if (!ok || !context.mounted) return;
+                                      await runAction(
+                                        context,
+                                        store.checkInVisitor(v.id),
+                                        success: '${v.name} sudah masuk',
+                                      );
+                                    },
                                     child: const Text('Check-in'),
                                   )
                                 : StatusChip('Menunggu', Colors.blue.shade600),

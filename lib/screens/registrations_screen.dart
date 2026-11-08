@@ -274,6 +274,20 @@ class RegistrationDetailScreen extends StatelessWidget {
                   onPressed: blocker != null
                       ? null
                       : () async {
+                          final ok = await confirmSave(context,
+                              title: r.isJoin
+                                  ? 'Setujui sebagai anggota rumah?'
+                                  : 'Setujui pendaftaran?',
+                              details: {
+                                'Nama': r.name,
+                                'Rumah': r.houseNo,
+                                'Email': r.email,
+                                'No. HP': r.phone,
+                              },
+                              note: 'Setelah disetujui, akun bisa langsung '
+                                  'dipakai.',
+                              action: 'Ya, setujui');
+                          if (!ok || !context.mounted) return;
                           final done = await runAction(
                             context,
                             store.approveRegistration(r.id).then((_) => true),

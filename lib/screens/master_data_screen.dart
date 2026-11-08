@@ -531,9 +531,14 @@ class BlockScreen extends StatelessWidget {
                   style: OutlinedButton.styleFrom(
                     foregroundColor: Theme.of(ctx).colorScheme.error,
                   ),
-                  onPressed: () {
+                  onPressed: () async {
                     Navigator.pop(ctx);
-                    runAction(context, store.deleteHouse(h.id),
+                    final ok = await confirmSave(context,
+                        title: 'Hapus nomor rumah?',
+                        details: {'Rumah': store.houseLabel(h)},
+                        action: 'Ya, hapus');
+                    if (!ok || !context.mounted) return;
+                    await runAction(context, store.deleteHouse(h.id),
                         success: 'Rumah ${store.houseLabel(h)} dihapus');
                   },
                   icon: const Icon(Icons.delete_outline),

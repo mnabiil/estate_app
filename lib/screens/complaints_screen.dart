@@ -66,9 +66,17 @@ class _ComplaintsScreenState extends State<ComplaintsScreen> {
                       ChoiceChip(
                         label: Text(s.label),
                         selected: c.status == s,
-                        onSelected: (_) {
+                        onSelected: (_) async {
                           Navigator.pop(ctx);
-                          runAction(
+                          final ok = await confirmSave(context,
+                              title: 'Ubah status keluhan?',
+                              details: {
+                                'Keluhan': c.title,
+                                'Status lama': c.status.label,
+                                'Status baru': s.label,
+                              });
+                          if (!ok || !context.mounted) return;
+                          await runAction(
                             context,
                             store.updateComplaintStatus(c.id, s),
                             success: 'Status keluhan: ${s.label}',

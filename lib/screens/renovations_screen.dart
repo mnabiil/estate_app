@@ -92,6 +92,15 @@ class _RenovationsScreenState extends State<RenovationsScreen> {
     if (ok != true || !mounted) return;
     int parse(TextEditingController c) =>
         int.tryParse(c.text.replaceAll(RegExp(r'[^0-9]'), '')) ?? 0;
+    final confirmed = await confirmSave(context,
+        title: 'Simpan nominal deposit?',
+        details: {
+          'Perumahan': estateName,
+          'Renovasi kecil': formatRupiah(parse(small)),
+          'Renovasi besar': formatRupiah(parse(large)),
+        },
+        note: 'Berlaku untuk pengajuan baru.');
+    if (!confirmed || !mounted) return;
     await runAction(
         context, store.setRenovationDeposits(parse(small), parse(large)),
         success: 'Nominal deposit disimpan');
@@ -666,8 +675,37 @@ class RenovationDetailScreen extends StatelessWidget {
       helpText: 'Batas waktu baru',
     );
     if (picked == null || !context.mounted) return;
+    final ok = await confirmSave(context,
+        title: 'Perpanjang ijin renovasi?',
+        details: {
+          'Rumah': store.residentById(r.residentId)?.houseNo ?? '',
+          'Batas lama': formatDate(r.endDate),
+          'Batas baru': formatDate(picked),
+        });
+    if (!ok || !context.mounted) return;
     await runAction(context, store.extendRenovation(r.id, picked),
         success: 'Diperpanjang sampai ${formatDate(picked)}');
+  }
+
+  /// Verifikasi deposit transfer / catat deposit tunai diterima.
+  Future<void> _markPaid(BuildContext context, Renovation r,
+      {required bool cash}) async {
+    final ok = await confirmSave(context,
+        title: cash ? 'Terima deposit tunai?' : 'Verifikasi deposit?',
+        details: {
+          'Rumah': store.residentById(r.residentId)?.houseNo ?? '',
+          'Deposit': formatRupiah(r.deposit),
+          'Metode': cash ? 'Tunai' : (r.depositMethod ?? 'Transfer'),
+        },
+        note: cash
+            ? 'Pastikan uang tunai sudah diterima.'
+            : 'Pastikan dana sudah masuk ke rekening perumahan.',
+        action: cash ? 'Ya, diterima' : 'Ya, verifikasi');
+    if (!ok || !context.mounted) return;
+    await runAction(context, store.markDepositPaid(r.id),
+        success: cash
+            ? 'Deposit tunai dicatat diterima'
+            : 'Deposit terverifikasi. Pekerjaan boleh dimulai.');
   }
 
   Future<void> _complete(BuildContext context, Renovation r) async {
@@ -742,6 +780,17 @@ class RenovationDetailScreen extends StatelessWidget {
     );
     if (ok != true || !context.mounted) return;
     final n = int.parse(amount.text.replaceAll('.', ''));
+    final confirmed = await confirmSave(context,
+        title: 'Kembalikan deposit?',
+        details: {
+          'Rumah': store.residentById(r.residentId)?.houseNo ?? '',
+          'Deposit': formatRupiah(r.deposit),
+          'Dikembalikan': formatRupiah(n),
+          if (n < r.deposit) 'Potongan': formatRupiah(r.deposit - n),
+          'Alasan': note.text,
+        },
+        action: 'Ya, kembalikan');
+    if (!confirmed || !context.mounted) return;
     await runAction(
       context,
       store.refundDeposit(r.id, n, note: note.text.trim()),
@@ -934,9 +983,7 @@ class RenovationDetailScreen extends StatelessWidget {
                     if (r.status == RenovationStatus.disetujui &&
                         r.depositStatus == DepositStatus.menungguVerifikasi) ...[
                       FilledButton.icon(
-                        onPressed: () => runAction(
-                            context, store.markDepositPaid(r.id),
-                            success: 'Deposit terverifikasi. Pekerjaan boleh dimulai.'),
+                        onPressed: () => _markPaid(context, r, cash: false),
                         icon: const Icon(Icons.verified_outlined),
                         label: const Text('Verifikasi deposit'),
                       ),
@@ -951,9 +998,7 @@ class RenovationDetailScreen extends StatelessWidget {
                     if (r.status == RenovationStatus.disetujui &&
                         r.depositStatus == DepositStatus.belumBayar)
                       OutlinedButton.icon(
-                        onPressed: () => runAction(
-                            context, store.markDepositPaid(r.id),
-                            success: 'Deposit tunai dicatat diterima'),
+                        onPressed: () => _markPaid(context, r, cash: true),
                         icon: const Icon(Icons.payments_outlined),
                         label: const Text('Terima deposit tunai'),
                       ),
