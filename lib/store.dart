@@ -429,6 +429,7 @@ class EstateStore extends ChangeNotifier {
   bool can(AdminPermission p) => permissions.contains(p);
 
   void _require(AdminPermission p) {
+    if (!isAdmin) throw StateError('Hanya pengelola yang bisa melakukan ini.');
     if (!can(p)) {
       throw StateError('Anda tidak punya akses "${p.label}". Hubungi pemilik.');
     }
