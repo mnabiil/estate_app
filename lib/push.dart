@@ -88,7 +88,7 @@ class PushService {
       });
 
   static PushTarget? _targetOf(RemoteMessage m) => switch (m.data['type']) {
-        'bill' => PushTarget.bills,
+        'bill' || 'payment' => PushTarget.bills,
         'announcement' => PushTarget.announcements,
         _ => null,
       };

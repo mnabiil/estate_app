@@ -34,6 +34,8 @@ class EstateStore extends ChangeNotifier {
     _seedDemo();
     _seedDemoRenovations();
     _seedDemoRegistration();
+    _seedDemoStaff();
+    _seedDemoPayments();
     // Anggota rumah contoh: istri Budi Santoso (A1/05).
     members.add(HouseholdMember(
       id: 'M-ANI',
@@ -54,6 +56,16 @@ class EstateStore extends ChangeNotifier {
   final List<Visitor> visitors = [];
   final List<Announcement> announcements = [];
   final List<Renovation> renovations = [];
+
+  /// Pembayaran IPL. Pengelola: semua; warga: rumahnya.
+  final List<Payment> payments = [];
+
+  /// Rekening tujuan transfer perumahan aktif.
+  final List<BankAccount> bankAccounts = [];
+
+  /// Tim pengelola & level akses perumahan aktif.
+  final List<StaffMember> staff = [];
+  final List<AdminRole> adminRoles = [];
 
   /// Anggota rumah (keluarga/penyewa). Pengelola: semua; warga: rumahnya.
   final List<HouseholdMember> members = [];
@@ -261,6 +273,9 @@ class EstateStore extends ChangeNotifier {
       estateName = d['name'] as String? ?? 'Perumahan';
       estateAddress = d['address'] as String? ?? '';
       registrationOpen = d['registrationOpen'] as bool? ?? true;
+      bankAccounts
+        ..clear()
+        ..addAll(BankAccount.listFrom(d['bankAccounts']));
       fee = (d['monthlyFee'] as num?)?.toInt() ?? monthlyFee;
       billDueDay = (d['billDueDay'] as num?)?.toInt() ?? defaultBillDueDay;
       depositSmall = (d['renovationDepositSmall'] as num?)?.toInt() ??
@@ -271,6 +286,8 @@ class EstateStore extends ChangeNotifier {
     }, onError: _onStreamError));
 
     if (isAdmin) {
+      _bind(_est.collection('staff'), staff, StaffMember.fromMap);
+      _bind(_est.collection('adminRoles'), adminRoles, AdminRole.fromMap);
       _bind(_est.collection('registrations'), registrations,
           Registration.fromMap);
       _bind(_est.collection('residents'), residents, Resident.fromMap);
@@ -314,6 +331,7 @@ class EstateStore extends ChangeNotifier {
           Registration.fromMap);
     }
     _bind(scoped('bills'), bills, Bill.fromMap);
+    _bind(scoped('payments'), payments, Payment.fromMap);
     _bind(scoped('renovations'), renovations, Renovation.fromMap);
     _bind(scoped('renovationLogs'), renovationLogs, RenovationLog.fromMap);
     _bind(scoped('complaints'), complaints, Complaint.fromMap);
@@ -334,9 +352,19 @@ class EstateStore extends ChangeNotifier {
     T Function(String id, Map<String, dynamic> data) parse,
   ) {
     _subs.add(query.snapshots().listen((snap) {
+      // Satu dokumen rusak/tidak lengkap (mis. diubah manual di Console)
+      // tidak boleh menyembunyikan dokumen lain: lewati & catat saja.
+      final items = <T>[];
+      for (final d in snap.docs) {
+        try {
+          items.add(parse(d.id, d.data()));
+        } catch (e) {
+          debugPrint('Dokumen ${d.reference.path} dilewati: $e');
+        }
+      }
       target
         ..clear()
-        ..addAll(snap.docs.map((d) => parse(d.id, d.data())));
+        ..addAll(items);
       notifyListeners();
     }, onError: _onStreamError));
   }
@@ -361,6 +389,10 @@ class EstateStore extends ChangeNotifier {
     registrations.clear();
     _pendingByEstate.clear();
     members.clear();
+    staff.clear();
+    adminRoles.clear();
+    payments.clear();
+    bankAccounts.clear();
     bills.clear();
     complaints.clear();
     visitors.clear();
@@ -371,15 +403,214 @@ class EstateStore extends ChangeNotifier {
 
   bool get isAdmin => currentUser?.role == Role.pengelola;
 
+  // ---------- Hak akses pengelola ----------
+
+  /// Mode demo: anggota tim yang sedang login (null = pemilik contoh).
+  String? _demoStaffId;
+
+  String? get _myUid => isFirebase ? _auth!.currentUser?.uid : _demoStaffId;
+
+  /// Data tim milik pengguna ini di perumahan aktif. Null untuk pemilik lama
+  /// (pengelola yang belum tercatat di tim dianggap pemilik).
+  StaffMember? get myStaff {
+    final uid = _myUid;
+    if (uid == null) return null;
+    return staff.where((m) => m.id == uid).firstOrNull;
+  }
+
+  /// Pemilik: akses penuh & satu-satunya yang mengatur tim/level akses.
+  /// Pengelola yang tidak tercatat di tim perumahan ini dianggap pemilik
+  /// (akun pengelola lama), sama seperti di aturan keamanan.
+  bool get isOwner {
+    if (!isAdmin) return false;
+    final m = myStaff;
+    if (m != null) return m.isOwner;
+    return isFirebase || _demoStaffId == null;
+  }
+
+  Set<AdminPermission> get permissions => !isAdmin
+      ? const {}
+      : isOwner
+          ? AdminPermission.values.toSet()
+          : (myStaff?.permissions ?? const {});
+
+  int get _ownerCount => staff.where((m) => m.isOwner).length;
+
+  bool can(AdminPermission p) => permissions.contains(p);
+
+  void _require(AdminPermission p) {
+    if (!isAdmin) throw StateError('Hanya pengelola yang bisa melakukan ini.');
+    if (!can(p)) {
+      throw StateError('Anda tidak punya akses "${p.label}". Hubungi pemilik.');
+    }
+  }
+
+  void _requireOwner() {
+    if (!isOwner) {
+      throw StateError('Hanya pemilik yang bisa mengatur tim & level akses.');
+    }
+  }
+
+  AdminRole? adminRoleById(String? id) =>
+      id == null ? null : adminRoles.where((r) => r.id == id).firstOrNull;
+
+  /// Membuat / mengubah level akses. Anggota tim dengan level ini ikut
+  /// diperbarui hak aksesnya.
+  Future<void> saveAdminRole(String name, Set<AdminPermission> perms,
+      {String? id}) async {
+    _requireOwner();
+    if (name.trim().isEmpty) throw StateError('Nama level wajib diisi.');
+    if (perms.isEmpty) throw StateError('Pilih minimal satu hak akses.');
+    _checkName(name, adminRoles.where((r) => r.id != id).map((r) => r.name),
+        'Level akses');
+    final users = staff.where((m) => id != null && m.roleId == id).toList();
+    if (!isFirebase) {
+      if (id == null) {
+        adminRoles.add(AdminRole(id: _newId('L'), name: name, permissions: perms));
+      } else {
+        adminRoleById(id)!
+          ..name = name
+          ..permissions = perms;
+        for (final m in users) {
+          m
+            ..roleName = name
+            ..permissions = perms;
+        }
+      }
+      notifyListeners();
+      return;
+    }
+    final ref = id == null
+        ? _est.collection('adminRoles').doc()
+        : _est.collection('adminRoles').doc(id);
+    final permList = [for (final p in perms) p.name]..sort();
+    final batch = _db!.batch()..set(ref, {'name': name, 'permissions': permList});
+    for (final m in users) {
+      batch.update(_est.collection('staff').doc(m.id),
+          {'roleName': name, 'permissions': permList});
+    }
+    await batch.commit();
+  }
+
+  Future<void> deleteAdminRole(String id) async {
+    _requireOwner();
+    final used = staff.where((m) => m.roleId == id && !m.isOwner).length;
+    if (used > 0) throw StateError('Level ini masih dipakai $used anggota tim.');
+    if (!isFirebase) {
+      adminRoles.removeWhere((r) => r.id == id);
+      notifyListeners();
+      return;
+    }
+    await _est.collection('adminRoles').doc(id).delete();
+  }
+
+  /// Menambah anggota tim pengelola. [roleId] null = pemilik.
+  /// Mode Firebase: mengembalikan password sementara bila akun baru dibuat
+  /// (null bila email sudah punya akun pengelola).
+  Future<String?> addStaff({
+    required String name,
+    required String email,
+    String phone = '',
+    String? roleId,
+  }) async {
+    _requireOwner();
+    final role = adminRoleById(roleId);
+    if (roleId != null && role == null) throw StateError('Level tidak ditemukan.');
+    final mail = email.trim().toLowerCase();
+    if (!RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(mail)) {
+      throw StateError('Email tidak valid.');
+    }
+    if (staff.any((m) => m.email.toLowerCase() == mail)) {
+      throw StateError('$mail sudah ada di tim.');
+    }
+    if (!isFirebase) {
+      staff.add(StaffMember(
+        id: _newId('S'),
+        name: name.trim(),
+        email: mail,
+        phone: phone.trim(),
+        isOwner: role == null,
+        roleId: role?.id,
+        roleName: role?.name ?? '',
+        permissions: role?.permissions ?? const {},
+      ));
+      notifyListeners();
+      return null;
+    }
+    final res = await _fn!.httpsCallable('addStaff').call<Map<String, dynamic>>({
+      'estateId': _estateId,
+      'name': name.trim(),
+      'email': mail,
+      'phone': phone.trim(),
+      'roleId': roleId,
+    });
+    return res.data['tempPassword'] as String?;
+  }
+
+  /// Mengganti level akses anggota tim ([roleId] null = jadikan pemilik).
+  Future<void> setStaffRole(String uid, String? roleId) async {
+    _requireOwner();
+    final m = staff.where((m) => m.id == uid).firstOrNull;
+    if (m == null) throw StateError('Anggota tim tidak ditemukan.');
+    if (uid == _myUid) throw StateError('Tidak bisa mengubah level akses sendiri.');
+    final role = adminRoleById(roleId);
+    if (roleId != null && role == null) throw StateError('Level tidak ditemukan.');
+    if (m.isOwner && role != null && _ownerCount <= 1) {
+      throw StateError('Harus ada minimal satu pemilik.');
+    }
+    if (!isFirebase) {
+      m
+        ..isOwner = role == null
+        ..roleId = role?.id
+        ..roleName = role?.name ?? ''
+        ..permissions = role?.permissions ?? const {};
+      notifyListeners();
+      return;
+    }
+    await _est.collection('staff').doc(uid).update({
+      'isOwner': role == null,
+      'roleId': role?.id,
+      'roleName': role?.name ?? '',
+      'permissions': [
+        for (final p in role?.permissions ?? const <AdminPermission>{}) p.name
+      ]..sort(),
+    });
+  }
+
+  /// Mengeluarkan anggota tim dari perumahan ini.
+  Future<void> removeStaff(String uid) async {
+    _requireOwner();
+    if (uid == _myUid) throw StateError('Tidak bisa mengeluarkan diri sendiri.');
+    final target = staff.where((m) => m.id == uid).firstOrNull;
+    if (target != null && target.isOwner && _ownerCount <= 1) {
+      throw StateError('Harus ada minimal satu pemilik.');
+    }
+    if (!isFirebase) {
+      staff.removeWhere((m) => m.id == uid);
+      notifyListeners();
+      return;
+    }
+    await _fn!.httpsCallable('removeStaff').call<void>({
+      'estateId': _estateId,
+      'uid': uid,
+    });
+  }
+
   Resident? get currentResident {
     final id = currentUser?.residentId;
     return id == null ? null : residentById(id);
   }
 
   /// Login mode demo. [memberId]: masuk sebagai anggota rumah.
-  void login(Role role, {String? residentId, String? memberId}) {
+  /// [staffId]: masuk sebagai anggota tim pengelola (null = pemilik).
+  void login(Role role,
+      {String? residentId, String? memberId, String? staffId}) {
+    _demoStaffId = null;
     if (role == Role.pengelola) {
-      currentUser = const AppUser(name: 'Pak Hendra', role: Role.pengelola);
+      final m = staff.where((m) => m.id == staffId).firstOrNull;
+      _demoStaffId = m?.id;
+      currentUser = AppUser(
+          name: m?.name ?? 'Pak Hendra', role: Role.pengelola, email: m?.email);
     } else if (memberId != null) {
       final m = memberById(memberId)!;
       currentUser = AppUser(
@@ -418,6 +649,7 @@ class EstateStore extends ChangeNotifier {
     currentUser = null;
     myRegistration = null;
     _demoRegistrantId = null;
+    _demoStaffId = null;
     _lastPassword = null;
     if (isFirebase) {
       // Perangkat ini berhenti menerima notifikasi akun yang keluar.
@@ -453,6 +685,7 @@ class EstateStore extends ChangeNotifier {
   /// password sementaranya.
   Future<String?> addResident(String name, String houseId, String phone,
       {String? email}) async {
+    _require(AdminPermission.residents);
     final house = houseById(houseId);
     if (house == null) throw StateError('Rumah tidak ditemukan.');
     if (residentOfHouse(houseId) != null) {
@@ -487,9 +720,7 @@ class EstateStore extends ChangeNotifier {
   Future<({String email, String tempPassword})> resetResidentPassword(
       String residentId,
       {String? memberUid}) async {
-    if (!isAdmin) {
-      throw StateError('Hanya pengelola yang bisa mereset password warga.');
-    }
+    _require(AdminPermission.residents);
     if (!isFirebase) {
       throw StateError('Reset password hanya tersedia di mode Firebase.');
     }
@@ -524,10 +755,6 @@ class EstateStore extends ChangeNotifier {
     final r = renovationById(id);
     if (r == null) throw StateError('Ijin renovasi tidak ditemukan.');
     return r;
-  }
-
-  void _requireAdmin() {
-    if (!isAdmin) throw StateError('Hanya pengelola yang bisa melakukan ini.');
   }
 
   DocumentReference<Map<String, dynamic>> _renDoc(String id) =>
@@ -671,7 +898,7 @@ class EstateStore extends ChangeNotifier {
 
   /// Pengelola menyetujui pengajuan. Setelah itu warga membayar deposit.
   Future<void> approveRenovation(String id, {String note = ''}) async {
-    _requireAdmin();
+    _require(AdminPermission.renovations);
     final r = _renovation(id);
     if (r.status != RenovationStatus.diajukan) {
       throw StateError('Ijin ini sudah diproses.');
@@ -687,7 +914,7 @@ class EstateStore extends ChangeNotifier {
   }
 
   Future<void> rejectRenovation(String id, String reason) async {
-    _requireAdmin();
+    _require(AdminPermission.renovations);
     final r = _renovation(id);
     if (r.status != RenovationStatus.diajukan) {
       throw StateError('Ijin ini sudah diproses.');
@@ -741,7 +968,7 @@ class EstateStore extends ChangeNotifier {
   /// Pengelola mengonfirmasi deposit diterima (verifikasi bukti transfer,
   /// atau pembayaran tunai langsung). Setelah ini pekerjaan boleh dimulai.
   Future<void> markDepositPaid(String id) async {
-    _requireAdmin();
+    _require(AdminPermission.renovations);
     final r = _renovation(id);
     if (r.status != RenovationStatus.disetujui ||
         r.depositStatus == DepositStatus.dibayar ||
@@ -764,7 +991,7 @@ class EstateStore extends ChangeNotifier {
 
   /// Bukti pembayaran tidak valid: warga diminta membayar / mengunggah ulang.
   Future<void> rejectDepositProof(String id, String reason) async {
-    _requireAdmin();
+    _require(AdminPermission.renovations);
     final r = _renovation(id);
     if (r.depositStatus != DepositStatus.menungguVerifikasi) {
       throw StateError('Tidak ada pembayaran yang menunggu verifikasi.');
@@ -783,7 +1010,7 @@ class EstateStore extends ChangeNotifier {
 
   /// Memperpanjang jangka waktu pekerjaan.
   Future<void> extendRenovation(String id, DateTime newEnd) async {
-    _requireAdmin();
+    _require(AdminPermission.renovations);
     final r = _renovation(id);
     if (r.status != RenovationStatus.disetujui) {
       throw StateError('Hanya renovasi yang disetujui yang bisa diperpanjang.');
@@ -797,7 +1024,7 @@ class EstateStore extends ChangeNotifier {
   }
 
   Future<void> completeRenovation(String id, {String note = ''}) async {
-    _requireAdmin();
+    _require(AdminPermission.renovations);
     final r = _renovation(id);
     if (!r.canWork) {
       throw StateError(
@@ -816,7 +1043,7 @@ class EstateStore extends ChangeNotifier {
 
   /// Mengembalikan deposit (penuh atau dipotong) setelah renovasi selesai.
   Future<void> refundDeposit(String id, int amount, {String note = ''}) async {
-    _requireAdmin();
+    _require(AdminPermission.renovations);
     final r = _renovation(id);
     if (r.depositStatus != DepositStatus.dibayar) {
       throw StateError('Deposit belum diterima atau sudah dikembalikan.');
@@ -868,7 +1095,12 @@ class EstateStore extends ChangeNotifier {
       throw StateError('Barang dicatat setelah ijin disetujui dan deposit '
           'diterima pengelola.');
     }
-    if (!isAdmin && currentUser?.residentId != r.residentId) {
+    if (isAdmin) {
+      if (!can(AdminPermission.renovationLogs) &&
+          !can(AdminPermission.renovations)) {
+        _require(AdminPermission.renovationLogs);
+      }
+    } else if (currentUser?.residentId != r.residentId) {
       throw StateError('Ini bukan renovasi rumah Anda.');
     }
     if (photos.length > maxLogPhotos) {
@@ -922,7 +1154,7 @@ class EstateStore extends ChangeNotifier {
 
   /// Pengelola, atau kepala keluarga rumah tersebut.
   bool canManageMembers(String residentId) =>
-      isAdmin ||
+      can(AdminPermission.residents) ||
       (currentUser?.role == Role.warga &&
           currentUser!.isPrimary &&
           currentUser!.residentId == residentId);
@@ -1360,7 +1592,7 @@ class EstateStore extends ChangeNotifier {
   /// Pengelola memproses semua pendaftaran; kepala keluarga hanya permintaan
   /// gabung ke rumahnya sendiri.
   bool canReviewRegistration(Registration r) =>
-      isAdmin ||
+      can(AdminPermission.residents) ||
       (r.isJoin && r.residentId != null && canManageMembers(r.residentId!));
 
   /// Pengelola menyetujui: akun pendaftar menjadi warga di rumah pilihannya.
@@ -1451,7 +1683,8 @@ class EstateStore extends ChangeNotifier {
   /// menerima keterangan langkah yang sedang berjalan.
   Future<ImportResult> applyImport(ImportPlan plan,
       {void Function(String step)? onProgress}) async {
-    _requireAdmin();
+    _require(AdminPermission.masterData);
+    if (plan.residents.isNotEmpty) _require(AdminPermission.residents);
     if (plan.hasErrors) {
       throw StateError('Perbaiki error di file terlebih dahulu.');
     }
@@ -1663,6 +1896,7 @@ class EstateStore extends ChangeNotifier {
 
   /// Menghubungkan / memindahkan warga ke rumah [houseId].
   Future<void> assignHouse(String residentId, String houseId) async {
+    _require(AdminPermission.residents);
     final r = residentById(residentId);
     if (r == null) throw StateError('Warga tidak ditemukan.');
     final h = houseById(houseId);
@@ -1689,6 +1923,7 @@ class EstateStore extends ChangeNotifier {
   /// Menghubungkan otomatis warga lama yang teks nomor rumahnya cocok dengan
   /// rumah kosong di master. Mengembalikan (terhubung, masih belum terhubung).
   Future<(int, int)> autoLinkResidents() async {
+    _require(AdminPermission.residents);
     final pending = unlinkedResidents;
     final taken = <String>{};
     final pairs = <(Resident, House)>[];
@@ -1769,6 +2004,7 @@ class EstateStore extends ChangeNotifier {
     int depositLarge = defaultDepositLarge,
     int billDueDay = defaultBillDueDay,
   }) async {
+    _requireOwner();
     _checkName(name, estates.map((e) => e.name), 'Perumahan');
     _checkDueDay(billDueDay);
     String id;
@@ -1877,6 +2113,7 @@ class EstateStore extends ChangeNotifier {
     bool? registrationOpen,
     int? billDueDay,
   }) async {
+    _require(AdminPermission.masterData);
     final open = registrationOpen ?? this.registrationOpen;
     final dueDay = billDueDay ?? this.billDueDay;
     _checkDueDay(dueDay);
@@ -1935,6 +2172,7 @@ class EstateStore extends ChangeNotifier {
   }
 
   Future<void> saveCluster(String name, {String? id}) async {
+    _require(AdminPermission.masterData);
     _checkName(name, clusters.where((c) => c.id != id).map((c) => c.name),
         'Cluster');
     if (!isFirebase) {
@@ -1951,6 +2189,7 @@ class EstateStore extends ChangeNotifier {
   }
 
   Future<void> deleteCluster(String id) async {
+    _require(AdminPermission.masterData);
     if (blocks.any((b) => b.clusterId == id)) {
       throw StateError('Hapus dulu semua blok di cluster ini.');
     }
@@ -1967,6 +2206,7 @@ class EstateStore extends ChangeNotifier {
 
   Future<void> saveHouseType(String clusterId, String name,
       {String? id, int? buildingArea, int? landArea, int? monthlyFee}) async {
+    _require(AdminPermission.masterData);
     if (monthlyFee != null && monthlyFee <= 0) {
       throw StateError('Tarif IPL harus lebih dari 0.');
     }
@@ -2006,6 +2246,7 @@ class EstateStore extends ChangeNotifier {
   }
 
   Future<void> deleteHouseType(String id) async {
+    _require(AdminPermission.masterData);
     final used = blocks.where((b) => b.typeId == id).length;
     if (used > 0) {
       throw StateError('Tipe ini masih dipakai $used blok.');
@@ -2021,6 +2262,7 @@ class EstateStore extends ChangeNotifier {
   /// Menyimpan blok. Setiap blok wajib punya satu tipe dari cluster yang sama.
   Future<void> saveBlock(String clusterId, String name,
       {String? id, required String typeId}) async {
+    _require(AdminPermission.masterData);
     final type = houseTypeById(typeId);
     if (type == null || type.clusterId != clusterId) {
       throw StateError('Pilih tipe rumah dari cluster ini.');
@@ -2049,6 +2291,7 @@ class EstateStore extends ChangeNotifier {
   }
 
   Future<void> deleteBlock(String id) async {
+    _require(AdminPermission.masterData);
     if (houses.any((h) => h.blockId == id)) {
       throw StateError('Hapus dulu semua nomor rumah di blok ini.');
     }
@@ -2063,6 +2306,7 @@ class EstateStore extends ChangeNotifier {
   /// Menambah nomor rumah ke blok. Nomor yang sudah ada dilewati.
   /// Mengembalikan jumlah nomor yang benar-benar ditambahkan.
   Future<int> addHouses(String blockId, List<String> numbers) async {
+    _require(AdminPermission.masterData);
     final block = blockById(blockId)!;
     final existing = housesOf(blockId).map((h) => h.number.toLowerCase()).toSet();
     final fresh = <String>[];
@@ -2097,6 +2341,7 @@ class EstateStore extends ChangeNotifier {
   }
 
   Future<void> deleteHouse(String id) async {
+    _require(AdminPermission.masterData);
     final r = residentOfHouse(id);
     if (r != null) {
       throw StateError('Rumah ini masih ditempati ${r.name}.');
@@ -2118,34 +2363,243 @@ class EstateStore extends ChangeNotifier {
       .where((b) => b.status == BillStatus.belumBayar)
       .fold(0, (total, b) => total + b.amount);
 
-  /// Warga: bayar lewat server (Cloud Function). Pengelola: tandai lunas (tunai).
-  Future<void> payBill(String billId, String method) async {
+  // ---------- Pembayaran: transfer ke rekening perumahan + kode unik ----------
+
+  Payment? paymentById(String id) =>
+      payments.where((p) => p.id == id).firstOrNull;
+
+  /// Tagihan belum dibayar sebuah rumah, terlama di atas.
+  List<Bill> unpaidBillsOf(String residentId) => billsForResident(residentId)
+      .where((b) => b.status == BillStatus.belumBayar)
+      .toList()
+    ..sort((a, b) => a.period.compareTo(b.period));
+
+  /// Pembayaran yang masih berjalan untuk sebuah rumah (maks. satu).
+  Payment? activePaymentOf(String residentId) {
+    final now = DateTime.now();
+    return payments
+        .where((p) => p.residentId == residentId && p.isActiveOn(now))
+        .firstOrNull;
+  }
+
+  /// Tagihan ini sedang dalam pembayaran yang belum selesai.
+  bool isBillLocked(Bill b) {
+    final now = DateTime.now();
+    return payments.any((p) => p.isActiveOn(now) && p.billIds.contains(b.id));
+  }
+
+  /// Pengelola: pembayaran yang menunggu verifikasi, terlama di atas.
+  List<Payment> get paymentsToVerify => payments
+      .where((p) => p.status == PaymentStatus.menungguVerifikasi)
+      .toList()
+    ..sort((a, b) => (a.submittedAt ?? a.createdAt)
+        .compareTo(b.submittedAt ?? b.createdAt));
+
+  /// Pengelola (hak tagihan): atur rekening tujuan transfer perumahan.
+  Future<void> saveBankAccounts(List<BankAccount> accounts) async {
+    _require(AdminPermission.billing);
+    if (accounts.length > 5) throw StateError('Maksimal 5 rekening.');
+    for (final a in accounts) {
+      if (a.bankName.trim().isEmpty ||
+          a.accountName.trim().isEmpty ||
+          !RegExp(r'^[0-9 .-]{5,30}$').hasMatch(a.accountNumber.trim())) {
+        throw StateError('Lengkapi nama bank, nomor & nama pemilik rekening.');
+      }
+    }
     if (!isFirebase) {
-      bills.firstWhere((b) => b.id == billId)
-        ..status = BillStatus.lunas
-        ..paidAt = DateTime.now()
-        ..method = method;
+      bankAccounts
+        ..clear()
+        ..addAll(accounts);
       notifyListeners();
       return;
     }
-    if (isAdmin) {
-      await _est.collection('bills').doc(billId).update({
-        'status': BillStatus.lunas.name,
-        'paidAt': FieldValue.serverTimestamp(),
-        'method': method,
-      });
-    } else {
-      await _fn!.httpsCallable('payBill').call<void>({
-        'estateId': _estateId,
-        'billId': billId,
-        'method': method,
-      });
+    await _est.update({
+      'bankAccounts': [for (final a in accounts) a.toMap()],
+    });
+  }
+
+  /// Warga memilih tagihan yang dibayar. Tagihan terlama harus ikut
+  /// (tidak boleh melompati tunggakan). Server membuat kode unik 3 digit
+  /// sehingga total transfer berbeda dari rumah lain.
+  Future<Payment> createPayment(List<String> billIds) async {
+    final rid = currentUser?.residentId;
+    if (isAdmin || rid == null) {
+      throw StateError('Pembayaran dilakukan oleh warga.');
     }
+    if (bankAccounts.isEmpty) {
+      throw StateError('Rekening pembayaran belum diatur pengelola.');
+    }
+    if (billIds.isEmpty) throw StateError('Pilih minimal satu tagihan.');
+    if (activePaymentOf(rid) != null) {
+      throw StateError('Masih ada pembayaran yang berjalan. Selesaikan atau '
+          'batalkan dulu.');
+    }
+    final unpaid = unpaidBillsOf(rid);
+    final selected = billIds.toSet();
+    if (!selected.every((id) => unpaid.any((b) => b.id == id))) {
+      throw StateError('Tagihan tidak ditemukan atau sudah lunas.');
+    }
+    // Harus tagihan-tagihan terlama secara berurutan.
+    final expected = unpaid.take(selected.length).map((b) => b.id).toSet();
+    if (!expected.containsAll(selected)) {
+      throw StateError('Tagihan terlama harus dibayar lebih dulu.');
+    }
+    if (!isFirebase) {
+      final now = DateTime.now();
+      final used = {
+        for (final p in payments)
+          if (p.isActiveOn(now)) p.uniqueCode,
+      };
+      final free = [for (var c = 1; c <= 999; c++) if (!used.contains(c)) c];
+      final code = free[_random.nextInt(free.length)];
+      final chosen = unpaid.where((b) => selected.contains(b.id)).toList();
+      final house = residentById(rid)?.houseNo ?? '';
+      final p = Payment(
+        id: _newId('PAY'),
+        residentId: rid,
+        billIds: [for (final b in chosen) b.id],
+        periods: [for (final b in chosen) monthKey(b.period)],
+        baseAmount: chosen.fold(0, (t, b) => t + b.amount),
+        uniqueCode: code,
+        reference: paymentReference(house, code),
+        houseNo: house,
+        residentName: residentById(rid)?.name ?? '',
+        createdAt: now,
+        expiresAt: now.add(paymentValidity),
+      );
+      payments.add(p);
+      notifyListeners();
+      return p;
+    }
+    final res = await _fn!.httpsCallable('createPayment').call<Map<String, dynamic>>({
+      'estateId': _estateId,
+      'billIds': billIds,
+    });
+    final id = res.data['paymentId'] as String;
+    // Tunggu dokumen tiba lewat listener (biasanya instan).
+    for (var i = 0; i < 20 && paymentById(id) == null; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+    }
+    return paymentById(id) ??
+        Payment.fromMap(id, (res.data['payment'] as Map).cast<String, dynamic>());
+  }
+
+  /// Warga mengunggah bukti transfer (juga untuk unggah ulang bila ditolak).
+  Future<void> submitPaymentProof(String paymentId, XFile proof) async {
+    final p = paymentById(paymentId);
+    if (p == null) throw StateError('Pembayaran tidak ditemukan.');
+    if (currentUser?.residentId != p.residentId) {
+      throw StateError('Ini bukan pembayaran rumah Anda.');
+    }
+    final now = DateTime.now();
+    if (!p.canUploadProofOn(now)) {
+      throw StateError(p.statusOn(now) == PaymentStatus.kedaluwarsa
+          ? 'Batas waktu transfer sudah lewat. Buat pembayaran baru.'
+          : 'Bukti tidak bisa diunggah pada status ini.');
+    }
+    if (!isFirebase) {
+      p
+        ..status = PaymentStatus.menungguVerifikasi
+        ..proofUrl = proof.path
+        ..submittedAt = now
+        ..note = '';
+      notifyListeners();
+      return;
+    }
+    final ref = _storage!.ref(
+        'estates/$_estateId/payments/${p.residentId}/${p.id}/bukti-${now.millisecondsSinceEpoch}.jpg');
+    await ref.putData(
+        await proof.readAsBytes(), SettableMetadata(contentType: 'image/jpeg'));
+    await _est.collection('payments').doc(p.id).update({
+      'status': PaymentStatus.menungguVerifikasi.name,
+      'proofUrl': await ref.getDownloadURL(),
+      'submittedAt': FieldValue.serverTimestamp(),
+      'note': '',
+    });
+  }
+
+  /// Warga membatalkan pembayaran yang belum diverifikasi (mis. salah pilih
+  /// tagihan). Tagihannya bisa dibayar lagi dengan kode baru.
+  Future<void> cancelPayment(String paymentId) async {
+    final p = paymentById(paymentId);
+    if (p == null) throw StateError('Pembayaran tidak ditemukan.');
+    if (currentUser?.residentId != p.residentId) {
+      throw StateError('Ini bukan pembayaran rumah Anda.');
+    }
+    if (p.status != PaymentStatus.menungguTransfer &&
+        p.status != PaymentStatus.ditolak) {
+      throw StateError('Pembayaran ini tidak bisa dibatalkan.');
+    }
+    if (!isFirebase) {
+      p.status = PaymentStatus.dibatalkan;
+      notifyListeners();
+      return;
+    }
+    await _est
+        .collection('payments')
+        .doc(p.id)
+        .update({'status': PaymentStatus.dibatalkan.name});
+  }
+
+  /// Pengelola (hak tagihan) memverifikasi transfer: semua tagihan di
+  /// dalamnya menjadi lunas.
+  Future<void> verifyPayment(String paymentId) async {
+    _require(AdminPermission.billing);
+    final p = paymentById(paymentId);
+    if (p == null || p.status != PaymentStatus.menungguVerifikasi) {
+      throw StateError('Pembayaran tidak menunggu verifikasi.');
+    }
+    if (!isFirebase) {
+      final now = DateTime.now();
+      for (final b in bills.where((b) => p.billIds.contains(b.id))) {
+        b
+          ..status = BillStatus.lunas
+          ..paidAt = now
+          ..method = 'Transfer · kode ${p.uniqueCode.toString().padLeft(3, '0')}'
+          ..paymentId = p.id;
+      }
+      p
+        ..status = PaymentStatus.diterima
+        ..reviewedAt = now
+        ..reviewedBy = currentUser?.name ?? '';
+      notifyListeners();
+      return;
+    }
+    await _fn!.httpsCallable('verifyPayment').call<void>({
+      'estateId': _estateId,
+      'paymentId': paymentId,
+    });
+  }
+
+  /// Bukti tidak valid: warga diminta mengunggah ulang (atau membatalkan).
+  Future<void> rejectPayment(String paymentId, String reason) async {
+    _require(AdminPermission.billing);
+    final p = paymentById(paymentId);
+    if (p == null || p.status != PaymentStatus.menungguVerifikasi) {
+      throw StateError('Pembayaran tidak menunggu verifikasi.');
+    }
+    if (reason.trim().isEmpty) throw StateError('Isi alasan penolakan.');
+    if (!isFirebase) {
+      p
+        ..status = PaymentStatus.ditolak
+        ..note = reason.trim()
+        ..reviewedAt = DateTime.now()
+        ..reviewedBy = currentUser?.name ?? '';
+      notifyListeners();
+      return;
+    }
+    await _est.collection('payments').doc(p.id).update({
+      'status': PaymentStatus.ditolak.name,
+      'note': reason.trim(),
+      'reviewedAt': FieldValue.serverTimestamp(),
+      'reviewedBy': currentUser?.name ?? '',
+    });
   }
 
   /// Membuat tagihan bulan berjalan untuk warga yang belum punya.
   /// Mengembalikan jumlah tagihan baru.
   Future<int> generateBillsForCurrentMonth() async {
+    _require(AdminPermission.billing);
     final now = DateTime.now();
     final period = DateTime(now.year, now.month);
     final missing = residents
@@ -2240,6 +2694,7 @@ class EstateStore extends ChangeNotifier {
   }
 
   Future<void> updateComplaintStatus(String id, ComplaintStatus status) async {
+    _require(AdminPermission.complaints);
     if (!isFirebase) {
       complaints.firstWhere((c) => c.id == id).status = status;
       notifyListeners();
@@ -2271,6 +2726,7 @@ class EstateStore extends ChangeNotifier {
   }
 
   Future<void> checkInVisitor(String id) async {
+    _require(AdminPermission.visitors);
     if (!isFirebase) {
       visitors.firstWhere((v) => v.id == id).checkedInAt = DateTime.now();
       notifyListeners();
@@ -2284,6 +2740,7 @@ class EstateStore extends ChangeNotifier {
   // ---------- Pengumuman ----------
 
   Future<void> addAnnouncement(String title, String body) async {
+    _require(AdminPermission.announcements);
     if (!isFirebase) {
       announcements.insert(
         0,
@@ -2378,6 +2835,82 @@ class EstateStore extends ChangeNotifier {
     ));
   }
 
+  /// Rekening perumahan & satu pembayaran yang menunggu verifikasi.
+  void _seedDemoPayments() {
+    bankAccounts.addAll(const [
+      BankAccount(
+          bankName: 'BCA',
+          accountNumber: '123 456 7890',
+          accountName: 'Paguyuban Warga Griya Asri'),
+      BankAccount(
+          bankName: 'Bank Mandiri',
+          accountNumber: '137 00 1234567 8',
+          accountName: 'Paguyuban Warga Griya Asri'),
+    ]);
+    // Siti (R2) sudah transfer IPL bulan ini & mengunggah bukti.
+    final siti = residentById('R2')!;
+    final bill = unpaidBillsOf(siti.id).last;
+    final created = DateTime.now().subtract(const Duration(hours: 3));
+    payments.add(Payment(
+      id: 'PAY-DEMO',
+      residentId: siti.id,
+      billIds: [bill.id],
+      periods: [monthKey(bill.period)],
+      baseAmount: bill.amount,
+      uniqueCode: 457,
+      reference: paymentReference(siti.houseNo, 457),
+      houseNo: siti.houseNo,
+      residentName: siti.name,
+      createdAt: created,
+      expiresAt: created.add(paymentValidity),
+      status: PaymentStatus.menungguVerifikasi,
+      proofUrl: '',
+      submittedAt: created.add(const Duration(minutes: 40)),
+    ));
+  }
+
+  /// Tim pengelola contoh: pemilik + bendahara + satpam, dan 3 level akses.
+  void _seedDemoStaff() {
+    final bendahara = AdminRole(
+        id: 'L-BENDAHARA',
+        name: 'Bendahara',
+        permissions: {AdminPermission.billing});
+    final adminWarga = AdminRole(
+        id: 'L-ADMIN-WARGA',
+        name: 'Admin Warga',
+        permissions: {
+          AdminPermission.residents,
+          AdminPermission.complaints,
+          AdminPermission.announcements,
+        });
+    final satpam = AdminRole(
+        id: 'L-SATPAM',
+        name: 'Satpam',
+        permissions: {AdminPermission.visitors, AdminPermission.renovationLogs});
+    adminRoles.addAll([bendahara, adminWarga, satpam]);
+    staff.addAll([
+      StaffMember(
+          id: 'S-HENDRA',
+          name: 'Pak Hendra',
+          email: 'hendra@contoh.id',
+          isOwner: true),
+      StaffMember(
+          id: 'S-SARI',
+          name: 'Bu Sari',
+          email: 'sari.bendahara@contoh.id',
+          roleId: bendahara.id,
+          roleName: bendahara.name,
+          permissions: bendahara.permissions),
+      StaffMember(
+          id: 'S-JOKO',
+          name: 'Pak Joko',
+          email: 'joko.satpam@contoh.id',
+          roleId: satpam.id,
+          roleName: satpam.name,
+          permissions: satpam.permissions),
+    ]);
+  }
+
   /// Contoh pendaftaran warga mandiri yang menunggu verifikasi.
   void _seedDemoRegistration() {
     final b1 = blocks.firstWhere((b) => b.name == 'B1');
@@ -2416,8 +2949,8 @@ class EstateStore extends ChangeNotifier {
   /// Perumahan contoh kedua milik pengelola yang sama: master data saja.
   void _seedSecondDemoEstate() {
     final d = _DemoEstate(
-      name: 'Nilaya Residence',
-      address: 'Jl. Nilaya Raya No. 8, Tangerang',
+      name: 'Amani Residence',
+      address: 'Jl. Amani Raya No. 8, Tangerang',
       fee: 300000,
     );
     final c = Cluster(id: _newId('C'), name: 'Cluster Melati');
@@ -2439,7 +2972,7 @@ class EstateStore extends ChangeNotifier {
         number: n.toString().padLeft(2, '0'),
       ));
     }
-    _demoEstates['nilaya-residence'] = d;
+    _demoEstates['amani-residence'] = d;
   }
 
   void _seedDemo() {
@@ -2464,7 +2997,7 @@ class EstateStore extends ChangeNotifier {
     _estateId = 'griya-asri';
     estates.addAll([
       EstateInfo(id: 'griya-asri', name: estateName),
-      EstateInfo(id: 'nilaya-residence', name: 'Nilaya Residence'),
+      EstateInfo(id: 'amani-residence', name: 'Amani Residence'),
     ]);
 
     // Master: Cluster > Tipe > Blok > No. rumah (01-12 per blok).
@@ -2537,7 +3070,7 @@ class EstateStore extends ChangeNotifier {
       for (var i = 0; i < residents.length; i++) {
         final r = residents[i];
         // Bulan lalu: hampir semua lunas. Bulan ini: sebagian saja.
-        final paid = m > 0 ? r.id != 'R3' : i % 3 == 2;
+        final paid = m > 0 ? r.id != 'R3' : i % 3 == 2 && r.id != 'R3';
         bills.add(Bill(
           id: _newId('B'),
           residentId: r.id,
@@ -2685,7 +3218,11 @@ class _DemoEstate {
         ..registrationOpen = s.registrationOpen
         ..billDueDay = s.billDueDay
         ..registrations.addAll(s.registrations)
-        ..members.addAll(s.members);
+        ..members.addAll(s.members)
+        ..staff.addAll(s.staff)
+        ..adminRoles.addAll(s.adminRoles)
+        ..payments.addAll(s.payments)
+        ..bankAccounts.addAll(s.bankAccounts);
 
   final String name;
   final String address;
@@ -2696,6 +3233,10 @@ class _DemoEstate {
   int billDueDay = defaultBillDueDay;
   final registrations = <Registration>[];
   final members = <HouseholdMember>[];
+  final staff = <StaffMember>[];
+  final adminRoles = <AdminRole>[];
+  final payments = <Payment>[];
+  final bankAccounts = <BankAccount>[];
   final renovations = <Renovation>[];
   final renovationLogs = <RenovationLog>[];
   final residents = <Resident>[];
@@ -2729,5 +3270,9 @@ class _DemoEstate {
     s.billDueDay = billDueDay;
     s.registrations.addAll(registrations);
     s.members.addAll(members);
+    s.staff.addAll(staff);
+    s.adminRoles.addAll(adminRoles);
+    s.payments.addAll(payments);
+    s.bankAccounts.addAll(bankAccounts);
   }
 }

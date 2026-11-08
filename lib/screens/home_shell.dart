@@ -79,7 +79,12 @@ class _HomeShellState extends State<HomeShell> {
     return Scaffold(
       body: IndexedStack(
         index: _index,
-        children: [for (final t in tabs) t.page],
+        // Hanya tab aktif yang ikut animasi Hero (FAB tiap tab berbagi tag
+        // default sehingga bentrok saat membuka halaman baru).
+        children: [
+          for (var i = 0; i < tabs.length; i++)
+            HeroMode(enabled: i == _index, child: tabs[i].page),
+        ],
       ),
       bottomNavigationBar: DecoratedBox(
         decoration: BoxDecoration(

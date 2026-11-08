@@ -141,7 +141,7 @@ class _ImportScreenState extends State<ImportScreen> {
                     OutlinedButton.icon(
                       onPressed: _busy
                           ? null
-                          : () => _save('template-nilaya-living.xlsx',
+                          : () => _save('template-amani-living.xlsx',
                               buildTemplate()),
                       icon: const Icon(Icons.download),
                       label: const Text('Unduh template'),

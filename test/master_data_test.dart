@@ -5,7 +5,8 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   late EstateStore s;
 
-  setUp(() => s = EstateStore()); // mode demo, data contoh baru
+  // Mode demo, data contoh baru; login sebagai pemilik (akses penuh).
+  setUp(() => s = EstateStore()..login(Role.pengelola));
 
   HouseBlock block(String name) => s.blocks.firstWhere((b) => b.name == name);
   Cluster cluster(String name) => s.clusters.firstWhere((c) => c.name == name);
@@ -85,11 +86,11 @@ void main() {
 
   test('banyak perumahan: berpindah, data terpisah, tambah baru', () async {
     expect(s.estates.map((e) => e.name),
-        ['Perumahan Griya Asri', 'Nilaya Residence']);
+        ['Perumahan Griya Asri', 'Amani Residence']);
     expect(s.residents, hasLength(10));
 
-    await s.switchEstate('nilaya-residence');
-    expect(s.estateName, 'Nilaya Residence');
+    await s.switchEstate('amani-residence');
+    expect(s.estateName, 'Amani Residence');
     expect(s.fee, 300000);
     expect(s.residents, isEmpty);
     expect(s.clusters.single.name, 'Cluster Melati');
@@ -99,11 +100,11 @@ void main() {
     expect(s.residents, hasLength(10));
     expect(s.clusters, hasLength(2));
 
-    await s.createEstate(name: 'Nilaya Hills', address: 'Bogor', fee: 275000);
+    await s.createEstate(name: 'Amani Hills', address: 'Bogor', fee: 275000);
     expect(s.estates, hasLength(3));
-    expect(s.estateName, 'Nilaya Hills');
+    expect(s.estateName, 'Amani Hills');
     expect(s.clusters, isEmpty);
-    expect(s.createEstate(name: 'nilaya hills', address: '', fee: 1),
+    expect(s.createEstate(name: 'amani hills', address: '', fee: 1),
         throwsStateError);
   });
 

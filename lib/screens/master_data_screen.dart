@@ -668,7 +668,7 @@ Future<void> editEstate(BuildContext context, {bool create = false}) async {
                 textCapitalization: TextCapitalization.words,
                 decoration: const InputDecoration(
                   labelText: 'Nama perumahan',
-                  hintText: 'Contoh: Nilaya Residence',
+                  hintText: 'Contoh: Amani Residence',
                 ),
                 validator: (v) => _requiredMax(v, 100),
               ),

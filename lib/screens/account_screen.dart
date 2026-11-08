@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
+import '../models.dart';
 import '../store.dart';
+import '../widgets.dart';
 import 'announcements_screen.dart';
 import 'household_screen.dart';
 import 'master_data_screen.dart';
@@ -8,6 +10,7 @@ import 'notification_settings_screen.dart';
 import 'password_screen.dart';
 import 'registrations_screen.dart';
 import 'renovations_screen.dart';
+import 'staff_screen.dart';
 import 'visitors_screen.dart';
 
 class AccountScreen extends StatelessWidget {
@@ -38,7 +41,7 @@ class AccountScreen extends StatelessWidget {
           Center(
             child: Text(
               store.isAdmin
-                  ? 'Pengelola · $estateName'
+                  ? '${store.isOwner ? 'Pemilik' : store.myStaff?.levelLabel ?? 'Pengelola'} · $estateName'
                   : user.isPrimary
                       ? 'Kepala keluarga · Rumah ${resident?.houseNo}'
                       : 'Anggota rumah · ${user.relation?.label ?? ''} · '
@@ -47,6 +50,21 @@ class AccountScreen extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 24),
+          if (store.isAdmin)
+            ListTile(
+              leading: const Icon(Icons.location_city_outlined),
+              title: Text(estateName),
+              subtitle: Text(store.estates.length > 1
+                  ? 'Perumahan aktif · ketuk untuk ganti '
+                      '(${store.estates.length} perumahan)'
+                  : 'Perumahan aktif'),
+              trailing: store.estates.length > 1
+                  ? const Icon(Icons.swap_horiz)
+                  : null,
+              onTap: store.estates.length > 1
+                  ? () => pickActiveEstate(context)
+                  : null,
+            ),
           if (resident != null)
             ListTile(
               leading: const Icon(Icons.phone_outlined),
@@ -82,6 +100,16 @@ class AccountScreen extends StatelessWidget {
           ),
           if (store.isAdmin)
             ListTile(
+              leading: const Icon(Icons.admin_panel_settings_outlined),
+              title: const Text('Tim pengelola & level akses'),
+              subtitle: Text(store.isOwner
+                  ? 'Atur anggota tim dan hak aksesnya'
+                  : 'Level Anda: ${store.myStaff?.levelLabel ?? '-'}'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => push(const StaffScreen()),
+            ),
+          if (store.can(AdminPermission.masterData))
+            ListTile(
               leading: const Icon(Icons.location_city_outlined),
               title: const Text('Master data'),
               subtitle: const Text(
@@ -96,7 +124,7 @@ class AccountScreen extends StatelessWidget {
               trailing: const Icon(Icons.chevron_right),
               onTap: () => push(const VisitorsScreen()),
             ),
-          if (store.isAdmin)
+          if (store.can(AdminPermission.residents))
             ListTile(
               leading: const Icon(Icons.how_to_reg_outlined),
               title: const Text('Pendaftaran warga'),
@@ -127,7 +155,7 @@ class AccountScreen extends StatelessWidget {
             title: const Text('Tentang aplikasi'),
             onTap: () => showAboutDialog(
               context: context,
-              applicationName: 'Nilaya Living',
+              applicationName: 'Amani Living',
               applicationVersion: '0.1.0 (prototipe)',
               applicationIcon: Image.asset(
                 'assets/images/app_icon.png',
@@ -135,7 +163,7 @@ class AccountScreen extends StatelessWidget {
                 height: 48,
               ),
               applicationLegalese:
-                  'Nilaya (Sanskerta): kediaman, tempat bernaung.\n'
+                  'Amani: damai (Swahili) & aman, tenteram (Arab).\n'
                   'Aplikasi manajemen perumahan.',
             ),
           ),
