@@ -80,21 +80,12 @@
     </section>
   </main>
 
-  <script type="module">
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-    import {
-      getAuth, verifyPasswordResetCode, confirmPasswordReset, applyActionCode,
-    } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-
+  <script>
+    // Validasi form (tidak bergantung pada SDK Firebase).
     const $ = (id) => document.getElementById(id);
-    const show = (id) => {
+    function show(id) {
       for (const s of ["loading", "reset", "done", "failed"]) $(s).classList.toggle("hidden", s !== id);
-    };
-    const params = new URLSearchParams(location.search);
-    const mode = params.get("mode");
-    const code = params.get("oobCode");
-    const apiKey = params.get("apiKey");
-
+    }
     // Aturan sama dengan aplikasi: min. 8 karakter, berisi huruf dan angka.
     function passwordError(pw) {
       if (pw.length < 8) return "Minimal 8 karakter";
@@ -110,13 +101,6 @@
       if (/[^A-Za-z0-9]/.test(pw)) s++;
       return s;
     }
-
-    document.querySelectorAll(".toggle").forEach((b) => b.addEventListener("click", () => {
-      const input = $(b.dataset.for);
-      input.type = input.type === "password" ? "text" : "password";
-      b.textContent = input.type === "password" ? "Lihat" : "Sembunyikan";
-    }));
-
     function validate(showAll) {
       const p1 = $("pw1").value, p2 = $("pw2").value;
       const e1 = passwordError(p1);
@@ -127,10 +111,33 @@
       const bar = $("strength");
       bar.style.width = `${(s / 5) * 100}%`;
       bar.style.background = s <= 1 ? "#C62828" : s <= 3 ? "#F9A825" : "#8BC83F";
-      return !e1 && p2 && p1 === p2;
+      return !e1 && !!p2 && p1 === p2;
     }
+    document.querySelectorAll(".toggle").forEach((b) => b.addEventListener("click", () => {
+      const input = $(b.dataset.for);
+      input.type = input.type === "password" ? "text" : "password";
+      b.textContent = input.type === "password" ? "Lihat" : "Sembunyikan";
+    }));
     $("pw1").addEventListener("input", () => validate(false));
     $("pw2").addEventListener("input", () => validate(false));
+    // SDK gagal dimuat (mis. tanpa internet): jangan menggantung di "Memeriksa link…".
+    setTimeout(() => {
+      if (!$("loading").classList.contains("hidden")) {
+        $("failText").textContent = "Halaman tidak bisa dimuat. Periksa koneksi internet lalu buka ulang link dari email.";
+        show("failed");
+      }
+    }, 15000);
+  </script>
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+    import {
+      getAuth, verifyPasswordResetCode, confirmPasswordReset, applyActionCode,
+    } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+
+    const params = new URLSearchParams(location.search);
+    const mode = params.get("mode");
+    const code = params.get("oobCode");
+    const apiKey = params.get("apiKey");
 
     async function main() {
       if (!mode || !code || !apiKey) { show("failed"); return; }
