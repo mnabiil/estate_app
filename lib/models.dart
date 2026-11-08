@@ -978,10 +978,6 @@ class AdminRole {
         id: id,
         name: m['name'] as String? ?? '',
         permissions: AdminPermission.parse(m['permissions']),
-        allEstates: m['allEstates'] == true,
-        estateIds: [
-          for (final e in (m['estateIds'] as List<dynamic>? ?? const [])) '$e'
-        ],
       );
 }
 
@@ -1027,6 +1023,10 @@ class StaffMember {
         roleId: m['roleId'] as String?,
         roleName: m['roleName'] as String? ?? '',
         permissions: AdminPermission.parse(m['permissions']),
+        allEstates: m['allEstates'] == true,
+        estateIds: [
+          for (final e in (m['estateIds'] as List<dynamic>? ?? const [])) '$e'
+        ],
       );
 }
 
