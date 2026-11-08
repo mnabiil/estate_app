@@ -56,7 +56,7 @@ class _ComplaintsScreenState extends State<ComplaintsScreen> {
                 ),
               ],
               const SizedBox(height: 24),
-              if (store.isAdmin) ...[
+              if (store.can(AdminPermission.complaints)) ...[
                 Text('Ubah status', style: Theme.of(ctx).textTheme.labelLarge),
                 const SizedBox(height: 8),
                 Wrap(

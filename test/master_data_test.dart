@@ -5,7 +5,8 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   late EstateStore s;
 
-  setUp(() => s = EstateStore()); // mode demo, data contoh baru
+  // Mode demo, data contoh baru; login sebagai pemilik (akses penuh).
+  setUp(() => s = EstateStore()..login(Role.pengelola));
 
   HouseBlock block(String name) => s.blocks.firstWhere((b) => b.name == name);
   Cluster cluster(String name) => s.clusters.firstWhere((c) => c.name == name);

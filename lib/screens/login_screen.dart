@@ -20,6 +20,9 @@ class _LoginScreenState extends State<LoginScreen> {
   /// Demo: masuk sebagai anggota rumah (bukan kepala keluarga).
   String? _memberId;
 
+  /// Demo: masuk sebagai anggota tim pengelola (null = pemilik).
+  String? _staffId;
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -203,19 +206,42 @@ class _LoginScreenState extends State<LoginScreen> {
             ),
           ),
         ),
-      ] else
+      ] else ...[
+        Text('Masuk sebagai pengelola:', style: theme.textTheme.labelLarge),
+        const SizedBox(height: 8),
         Card(
-          child: ListTile(
-            leading: const Icon(Icons.badge_outlined),
-            title: const Text('Pak Hendra'),
-            subtitle: Text('Pengelola $estateName'),
+          clipBehavior: Clip.antiAlias,
+          child: Column(
+            children: [
+              if (store.staff.isEmpty)
+                ListTile(
+                  leading: const Icon(Icons.badge_outlined),
+                  title: const Text('Pak Hendra'),
+                  subtitle: Text('Pemilik · $estateName'),
+                ),
+              for (final m in store.staff)
+                ListTile(
+                  leading: Icon(m.isOwner ? Icons.star_outline : Icons.badge_outlined),
+                  title: Text(m.name),
+                  subtitle: Text(m.isOwner
+                      ? 'Pemilik · akses penuh'
+                      : '${m.roleName} · akses terbatas'),
+                  selected: (_staffId ?? store.staff.first.id) == m.id,
+                  trailing: (_staffId ?? store.staff.first.id) == m.id
+                      ? const Icon(Icons.check_circle)
+                      : null,
+                  onTap: () => setState(() => _staffId = m.id),
+                ),
+            ],
           ),
         ),
+      ],
       const SizedBox(height: 24),
       FilledButton(
         onPressed: () => store.login(_role,
             residentId: _residentId,
-            memberId: _role == Role.warga ? _memberId : null),
+            memberId: _role == Role.warga ? _memberId : null,
+            staffId: _role == Role.pengelola ? _staffId : null),
         child: const Text('Masuk'),
       ),
       const SizedBox(height: 12),

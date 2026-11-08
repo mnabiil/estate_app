@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../models.dart';
 import '../store.dart';
 import '../utils.dart';
 import '../widgets.dart';
@@ -56,7 +57,7 @@ class AnnouncementsScreen extends StatelessWidget {
         final list = store.announcements;
         return Scaffold(
           appBar: AppBar(title: const Text('Pengumuman')),
-          floatingActionButton: store.isAdmin
+          floatingActionButton: store.can(AdminPermission.announcements)
               ? FloatingActionButton.extended(
                   onPressed: () => _add(context),
                   icon: const Icon(Icons.campaign),

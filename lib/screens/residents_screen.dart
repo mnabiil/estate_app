@@ -265,6 +265,7 @@ class _ResidentsScreenState extends State<ResidentsScreen> {
                 r.phone,
               ].whereType<String>().join(' · ')),
             ),
+            if (store.can(AdminPermission.residents))
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
               child: _isLinked(r)
@@ -298,7 +299,7 @@ class _ResidentsScreenState extends State<ResidentsScreen> {
                     'Anggota rumah (${store.membersOf(r.id).length})'),
               ),
             ),
-            if (store.isFirebase)
+            if (store.isFirebase && store.can(AdminPermission.residents))
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
                 child: OutlinedButton.icon(
@@ -348,11 +349,13 @@ class _ResidentsScreenState extends State<ResidentsScreen> {
 
         return Scaffold(
           appBar: AppBar(title: Text('Data Warga (${store.residents.length})')),
-          floatingActionButton: FloatingActionButton(
-            tooltip: 'Tambah warga',
-            onPressed: _addResident,
-            child: const Icon(Icons.person_add),
-          ),
+          floatingActionButton: store.can(AdminPermission.residents)
+              ? FloatingActionButton(
+                  tooltip: 'Tambah warga',
+                  onPressed: _addResident,
+                  child: const Icon(Icons.person_add),
+                )
+              : null,
           body: Column(
             children: [
               Padding(
@@ -379,7 +382,7 @@ class _ResidentsScreenState extends State<ResidentsScreen> {
                         builder: (_) => const RegistrationsScreen())),
                   ),
                 ),
-              if (unlinked > 0)
+              if (unlinked > 0 && store.can(AdminPermission.residents))
                 _UnlinkedBanner(
                   count: unlinked,
                   filtering: _onlyUnlinked,

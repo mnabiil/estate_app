@@ -764,7 +764,10 @@ class RenovationDetailScreen extends StatelessWidget {
         final res = store.residentById(r.residentId);
         final (label, color) = renovationBadge(r);
         final logs = store.logsOf(r.id);
-        final canLog = r.canWork;
+        final canLog = r.canWork &&
+            (store.currentUser?.residentId == r.residentId ||
+                store.can(AdminPermission.renovationLogs) ||
+                store.can(AdminPermission.renovations));
         final isOwner = store.currentUser?.residentId == r.residentId;
 
         return Scaffold(
@@ -816,7 +819,7 @@ class RenovationDetailScreen extends StatelessWidget {
                 spacing: 8,
                 runSpacing: 8,
                 children: [
-                  if (isAdmin) ...[
+                  if (store.can(AdminPermission.renovations)) ...[
                     if (r.status == RenovationStatus.diajukan) ...[
                       FilledButton.icon(
                         onPressed: () => _approve(context, r),
@@ -885,7 +888,7 @@ class RenovationDetailScreen extends StatelessWidget {
                       icon: const Icon(Icons.payments_outlined),
                       label: Text('Bayar deposit ${formatRupiah(r.deposit)}'),
                     ),
-                  if ((isAdmin || isOwner) &&
+                  if ((store.can(AdminPermission.renovations) || isOwner) &&
                       (r.status == RenovationStatus.diajukan ||
                           (r.status == RenovationStatus.disetujui &&
                               r.depositStatus == DepositStatus.belumBayar)))

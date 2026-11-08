@@ -93,7 +93,7 @@ class VisitorsScreen extends StatelessWidget {
                         trailing: inAt != null
                             ? StatusChip('Masuk ${formatTime(inAt)}',
                                 Colors.green.shade600)
-                            : isAdmin
+                            : store.can(AdminPermission.visitors)
                                 ? FilledButton.tonal(
                                     onPressed: () => runAction(
                                       context,

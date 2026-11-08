@@ -201,7 +201,8 @@ class HouseholdScreen extends StatelessWidget {
                         ? Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              if (store.isAdmin && store.isFirebase)
+                              if (store.can(AdminPermission.residents) &&
+                                  store.isFirebase)
                                 IconButton(
                                   tooltip: 'Reset password',
                                   icon: const Icon(Icons.lock_reset),

@@ -930,3 +930,85 @@ class HouseholdMember {
         createdAt: _date(m['createdAt']) ?? DateTime.now(),
       );
 }
+
+// ---------- Tim pengelola & level akses ----------
+
+/// Hak akses pengelola. Pemilik (owner) selalu punya semua hak dan satu-
+/// satunya yang bisa mengatur level akses & anggota tim.
+enum AdminPermission {
+  masterData('Master data & profil perumahan',
+      'Cluster, tipe, blok, no. rumah, tarif IPL, jatuh tempo, import Excel'),
+  residents('Warga & pendaftaran',
+      'Tambah warga, anggota rumah, verifikasi pendaftaran, reset password'),
+  billing('Tagihan & pembayaran',
+      'Buat tagihan, rekening pembayaran, verifikasi bukti transfer'),
+  complaints('Keluhan', 'Menangani & mengubah status keluhan'),
+  visitors('Tamu', 'Check-in tamu'),
+  announcements('Pengumuman', 'Membuat & menghapus pengumuman'),
+  renovations('Ijin renovasi',
+      'Setujui/tolak, verifikasi deposit, perpanjang, selesai, kembalikan deposit'),
+  renovationLogs('Catat barang renovasi', 'Mencatat barang masuk/keluar');
+
+  const AdminPermission(this.label, this.description);
+  final String label;
+  final String description;
+
+  static Set<AdminPermission> parse(Object? list) => {
+        for (final v in (list as List<dynamic>? ?? const []))
+          if (AdminPermission.values.where((p) => p.name == v).firstOrNull
+              case final p?)
+            p,
+      };
+}
+
+/// Level akses yang bisa dibuat pemilik, mis. "Bendahara".
+class AdminRole {
+  AdminRole({required this.id, required this.name, required this.permissions});
+
+  final String id;
+  String name;
+  Set<AdminPermission> permissions;
+
+  factory AdminRole.fromMap(String id, Map<String, dynamic> m) => AdminRole(
+        id: id,
+        name: m['name'] as String? ?? '',
+        permissions: AdminPermission.parse(m['permissions']),
+      );
+}
+
+/// Anggota tim pengelola sebuah perumahan. ID = uid akun.
+/// Hak akses disalin dari level aksesnya agar mudah diperiksa aturan keamanan.
+class StaffMember {
+  StaffMember({
+    required this.id,
+    required this.name,
+    this.email = '',
+    this.phone = '',
+    this.isOwner = false,
+    this.roleId,
+    this.roleName = '',
+    this.permissions = const {},
+  });
+
+  final String id;
+  String name;
+  String email;
+  String phone;
+  bool isOwner;
+  String? roleId;
+  String roleName;
+  Set<AdminPermission> permissions;
+
+  String get levelLabel => isOwner ? 'Pemilik' : roleName;
+
+  factory StaffMember.fromMap(String id, Map<String, dynamic> m) => StaffMember(
+        id: id,
+        name: m['name'] as String? ?? '',
+        email: m['email'] as String? ?? '',
+        phone: m['phone'] as String? ?? '',
+        isOwner: m['isOwner'] == true,
+        roleId: m['roleId'] as String?,
+        roleName: m['roleName'] as String? ?? '',
+        permissions: AdminPermission.parse(m['permissions']),
+      );
+}
