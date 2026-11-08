@@ -70,9 +70,24 @@ sendiri (template: Bendahara, Admin Warga, Satpam, Koordinator Bangunan) dengan 
 master data, warga & pendaftaran, tagihan & pembayaran, keluhan, tamu, pengumuman, ijin
 renovasi, catat barang renovasi. Tab *Tim* untuk menambah pengelola (email; akun baru dibuat
 dengan password sementara oleh `addStaff`), mengganti level, atau mengeluarkan (`removeStaff`).
-Pemilik punya semua hak; minimal harus ada satu pemilik. Hak dicek di aplikasi,
+Pemilik punya semua hak; minimal harus ada satu pemilik.
+**Akses perumahan**: anggota tim bisa diberi akses ke beberapa perumahan atau **semua
+perumahan** (termasuk yang dibuat nanti; `setStaffEstates`, `createEstate` ikut menyalin).
+Level akses disalin ke tiap perumahan. Pengelola memilih perumahan aktif di **Akun**. Hak dicek di aplikasi,
 `firestore.rules` (`can(estateId, perm)`) dan Cloud Functions. Pengelola lama yang belum tercatat
 di `staff` dianggap pemilik.
+
+## Satu akun, beberapa rumah
+
+Satu akun warga bisa punya beberapa unit di satu atau beberapa perumahan. Pengelola cukup
+menambah warga (atau anggota rumah) dengan **email yang sudah punya akun warga**: rumah baru
+ditambahkan ke akun itu, tanpa akun/password baru. Warga memilih **rumah aktif** di Akun;
+tagihan, keluhan, tamu, renovasi & pembayaran mengikuti rumah aktif. Peran bisa berbeda per
+rumah (kepala keluarga di rumah A, anggota/penyewa di rumah B).
+
+Profil: rumah utama tetap `estateId`/`residentId`; rumah lain di `homeKeys`
+(`"estateId/residentId"`), `homeEstates`, `memberKeys` (rumah sebagai anggota), `homeLabels`,
+`homeRelations`. Akun lama tidak perlu dimigrasi.
 
 ## Pembayaran IPL (transfer + kode unik)
 
@@ -205,7 +220,8 @@ users/{uid}                      { estateId, estateIds?, role: warga|pengelola|p
 estates/{estateId}               { name, address, monthlyFee, billDueDay (1–28), renovationDepositSmall,
                                    renovationDepositLarge, registrationOpen,
                                    bankAccounts[{bankName, accountNumber, accountName}] }
-  staff/{uid}                    { name, email, phone, isOwner, roleId, roleName, permissions[] }
+  staff/{uid}                    { name, email, phone, isOwner, roleId, roleName, permissions[],
+                                   allEstates, estateIds[] }
   adminRoles/{id}                { name, permissions[] }
   members/{uid}                  { residentId, name, relation, phone, email, addedBy, createdAt }
   registrations/{uid}            { estateId, name, phone, email, houseId, houseNo, clusterName, occupancy,

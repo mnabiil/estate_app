@@ -69,6 +69,8 @@ class _TeamTab extends StatelessWidget {
         email: input.email,
         phone: input.phone,
         roleId: input.roleId,
+        estateIds: input.estateIds.toList(),
+        allEstates: input.allEstates,
       );
     } catch (e) {
       failed = true;
@@ -147,6 +149,41 @@ class _TeamTab extends StatelessWidget {
         success: 'Level ${m.name} diperbarui');
   }
 
+  Future<void> _editEstates(BuildContext context, StaffMember m) async {
+    var selected = store.staffEstateIds(m).toSet();
+    var all = m.allEstates;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) => AlertDialog(
+          title: Text('Akses perumahan ${m.name}'),
+          content: SingleChildScrollView(
+            child: EstateChecklist(
+              selected: selected,
+              onChanged: (v) => setLocal(() => selected = v),
+              all: all,
+              onAllChanged: (v) => setLocal(() => all = v),
+            ),
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Batal')),
+            FilledButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('Simpan')),
+          ],
+        ),
+      ),
+    );
+    if (ok != true || !context.mounted) return;
+    await runAction(
+        context,
+        store.setStaffEstates(m.id,
+            estateIds: selected.toList(), allEstates: all),
+        success: 'Akses perumahan ${m.name} diperbarui');
+  }
+
   Future<void> _remove(BuildContext context, StaffMember m) async {
     final ok = await showDialog<bool>(
       context: context,
@@ -223,17 +260,26 @@ class _TeamTab extends StatelessWidget {
                 subtitle: Text([
                   m.levelLabel,
                   if (!m.isOwner) _permSummary(m.permissions),
+                  if (store.estates.length > 1) store.staffEstatesLabel(m),
                   if (m.email.isNotEmpty) m.email,
                 ].join(' · ')),
                 isThreeLine: !m.isOwner,
                 trailing: owner && m.id != store.myStaff?.id
                     ? PopupMenuButton<String>(
-                        onSelected: (v) => v == 'role'
-                            ? _changeRole(context, m)
-                            : _remove(context, m),
-                        itemBuilder: (_) => const [
-                          PopupMenuItem(value: 'role', child: Text('Ganti level')),
-                          PopupMenuItem(value: 'remove', child: Text('Keluarkan')),
+                        onSelected: (v) => switch (v) {
+                          'role' => _changeRole(context, m),
+                          'estates' => _editEstates(context, m),
+                          _ => _remove(context, m),
+                        },
+                        itemBuilder: (_) => [
+                          const PopupMenuItem(
+                              value: 'role', child: Text('Ganti level')),
+                          if (store.estates.length > 1)
+                            const PopupMenuItem(
+                                value: 'estates',
+                                child: Text('Akses perumahan')),
+                          const PopupMenuItem(
+                              value: 'remove', child: Text('Keluarkan')),
                         ],
                       )
                     : null,
@@ -252,7 +298,14 @@ String _permSummary(Set<AdminPermission> perms) => perms.isEmpty
     : [for (final p in AdminPermission.values) if (perms.contains(p)) p.label]
         .join(', ');
 
-typedef _StaffInput = ({String name, String email, String phone, String? roleId});
+typedef _StaffInput = ({
+  String name,
+  String email,
+  String phone,
+  String? roleId,
+  Set<String> estateIds,
+  bool allEstates,
+});
 
 class _AddStaffDialog extends StatefulWidget {
   const _AddStaffDialog();
@@ -267,6 +320,8 @@ class _AddStaffDialogState extends State<_AddStaffDialog> {
   final _email = TextEditingController();
   final _phone = TextEditingController();
   late String _roleId = store.adminRoles.isEmpty ? '' : store.adminRoles.first.id;
+  Set<String> _estates = {if (store.activeEstateId != null) store.activeEstateId!};
+  bool _allEstates = false;
 
   @override
   void dispose() {
@@ -338,6 +393,20 @@ class _AddStaffDialogState extends State<_AddStaffDialog> {
                       'untuk memberi hak terbatas.',
                       style: Theme.of(context).textTheme.bodySmall),
                 ),
+              if (store.estates.length > 1) ...[
+                const SizedBox(height: 16),
+                Text('Akses perumahan',
+                    style: Theme.of(context).textTheme.labelLarge),
+                EstateChecklist(
+                  selected: _estates,
+                  onChanged: (v) => setState(() => _estates = v),
+                  all: _allEstates,
+                  onAllChanged: (v) => setState(() => _allEstates = v),
+                ),
+                Text('Level akses yang dipilih berlaku di semua perumahan '
+                    'tersebut.',
+                    style: Theme.of(context).textTheme.bodySmall),
+              ],
             ],
           ),
         ),
@@ -348,12 +417,18 @@ class _AddStaffDialogState extends State<_AddStaffDialog> {
             child: const Text('Batal')),
         FilledButton(
           onPressed: () {
+            if (!_allEstates && _estates.isEmpty) {
+              showSnack(context, 'Pilih minimal satu perumahan');
+              return;
+            }
             if (_formKey.currentState!.validate()) {
               Navigator.pop<_StaffInput>(context, (
                 name: _name.text.trim(),
                 email: _email.text.trim(),
                 phone: _phone.text.trim(),
                 roleId: _roleId.isEmpty ? null : _roleId,
+                estateIds: _estates,
+                allEstates: _allEstates,
               ));
             }
           },

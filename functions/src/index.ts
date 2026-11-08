@@ -9,7 +9,8 @@
  *  - approveRegistration (callable)  pengelola menyetujui pendaftaran -> akun jadi warga
  *  - addHouseholdMember / removeHouseholdMember (callable)
  *                                    akun anggota rumah (keluarga/penyewa)
- *  - addStaff / removeStaff (callable) pemilik mengelola tim pengelola
+ *  - addStaff / setStaffEstates / removeStaff (callable) pemilik mengelola tim
+ *                                    pengelola & akses ke beberapa/semua perumahan
  *  - resetResidentPassword (callable) pengelola membuat password sementara baru
  *                                    untuk warga yang lupa password
  *  - createPayment / verifyPayment (callable) pembayaran IPL via transfer
@@ -58,7 +59,76 @@ type Profile = {
   name: string;
   /** "anggota" untuk anggota rumah; kepala keluarga tidak punya field ini. */
   householdRole?: "anggota";
+  /** Satu akun, beberapa rumah: ["estateId/residentId", ...]. */
+  homeKeys?: string[];
+  /** Rumah tempat akun ini menjadi anggota (bukan kepala keluarga). */
+  memberKeys?: string[];
 };
+
+/** Semua rumah akun warga: rumah utama + homeKeys. */
+function homeKeysOf(p: Profile): string[] {
+  const keys = new Set(p.homeKeys ?? []);
+  if (p.estateId && p.residentId) keys.add(`${p.estateId}/${p.residentId}`);
+  return [...keys];
+}
+
+function ownsHome(p: Profile, estateId: string, residentId: string): boolean {
+  return p.role === "warga" && homeKeysOf(p).includes(`${estateId}/${residentId}`);
+}
+
+function headOfHome(p: Profile, estateId: string, residentId: string): boolean {
+  const key = `${estateId}/${residentId}`;
+  return ownsHome(p, estateId, residentId) &&
+    !(p.memberKeys ?? []).includes(key) &&
+    !(p.estateId === estateId && p.residentId === residentId && p.householdRole === "anggota");
+}
+
+/**
+ * Menambah rumah ke akun warga yang sudah ada (satu akun, beberapa rumah).
+ * Rumah utama (estateId/residentId) tetap; rumah baru masuk homeKeys.
+ */
+async function addHomeToUser(
+  uid: string,
+  estateId: string,
+  residentId: string,
+  opts: { member?: boolean; relation?: string } = {},
+) {
+  const ref = db.doc(`users/${uid}`);
+  const p = (await ref.get()).data() as Profile;
+  const [estate, resident] = await Promise.all([
+    db.doc(`estates/${estateId}`).get(),
+    db.doc(`estates/${estateId}/residents/${residentId}`).get(),
+  ]);
+  const key = `${estateId}/${residentId}`;
+  const primary = p.estateId && p.residentId ? `${p.estateId}/${p.residentId}` : null;
+  const members: string[] = [];
+  if (opts.member) members.push(key);
+  if (primary && p.householdRole === "anggota") members.push(primary);
+  const update: Record<string, unknown> = {
+    homeKeys: FieldValue.arrayUnion(...[primary, key].filter((x): x is string => !!x)),
+    homeEstates: FieldValue.arrayUnion(...[p.estateId, estateId].filter((x): x is string => !!x)),
+    homeLabels: { [key]: `${resident.get("houseNo") ?? ""} · ${estate.get("name") ?? ""}` },
+  };
+  if (members.length) update.memberKeys = FieldValue.arrayUnion(...members);
+  if (opts.member && opts.relation) update.homeRelations = { [key]: opts.relation };
+  await ref.set(update, { merge: true });
+}
+
+/** Akun warga yang sudah ada untuk email ini (null bila belum ada akun). */
+async function existingWarga(email: string): Promise<string | null> {
+  let uid: string;
+  try {
+    uid = (await getAuth().getUserByEmail(email)).uid;
+  } catch (e: unknown) {
+    if ((e as { code?: string }).code === "auth/user-not-found") return null;
+    throw e;
+  }
+  const profile = await db.doc(`users/${uid}`).get();
+  if (!profile.exists || profile.get("role") !== "warga") {
+    throw new HttpsError("already-exists", "Email ini dipakai akun pengelola/pendaftar. Gunakan email lain.");
+  }
+  return uid;
+}
 
 async function profileOf(uid: string | undefined): Promise<Profile & { uid: string }> {
   if (!uid) throw new HttpsError("unauthenticated", "Silakan login terlebih dahulu.");
@@ -153,7 +223,11 @@ export const createEstate = onCall(async (req) => {
       throw new HttpsError("invalid-argument", "Deposit renovasi harus angka bulat > 0.");
     }
   }
-  const managed = Array.from(new Set([me.estateId, ...(me.estateIds ?? [])].filter(Boolean)));
+  const managed = managedEstates(me);
+  const owned = await ownedEstates(me);
+  if (managed.length > 0 && owned.length === 0) {
+    throw new HttpsError("permission-denied", "Hanya pemilik yang bisa menambah perumahan.");
+  }
   if (managed.length >= 20) {
     throw new HttpsError("resource-exhausted", "Maksimal 20 perumahan per akun.");
   }
@@ -173,7 +247,43 @@ export const createEstate = onCall(async (req) => {
   batch.update(db.doc(`users/${uid}`), {
     estateIds: FieldValue.arrayUnion(...managed, estateRef.id),
   });
+  // Pembuat = pemilik perumahan baru.
+  batch.set(estateRef.collection("staff").doc(me.uid), {
+    name: me.name ?? "",
+    email: req.auth?.token.email ?? "",
+    phone: "",
+    isOwner: true,
+    roleId: null,
+    roleName: "",
+    permissions: [],
+    allEstates: false,
+    estateIds: [...managed, estateRef.id],
+    addedBy: me.uid,
+    createdAt: FieldValue.serverTimestamp(),
+  });
+  // Anggota tim dengan akses "semua perumahan" ikut mendapat akses.
+  const allStaff = new Map<string, { estateId: string; snap: QueryDocumentSnapshot }>();
+  for (const id of owned) {
+    const q = await db.collection(`estates/${id}/staff`).where("allEstates", "==", true).get();
+    for (const d of q.docs) if (d.id !== me.uid && !allStaff.has(d.id)) allStaff.set(d.id, { estateId: id, snap: d });
+  }
+  for (const [staffUid, { snap }] of allStaff) {
+    putStaff(batch, estateRef.id, staffUid, {
+      name: String(snap.get("name") ?? ""),
+      email: String(snap.get("email") ?? ""),
+      phone: String(snap.get("phone") ?? ""),
+      isOwner: snap.get("isOwner") === true,
+      roleId: snap.get("roleId") ?? null,
+      roleName: String(snap.get("roleName") ?? ""),
+      permissions: [...(snap.get("permissions") ?? [])],
+    }, true, me.uid);
+    batch.update(db.doc(`users/${staffUid}`), { estateIds: FieldValue.arrayUnion(estateRef.id) });
+  }
   await batch.commit();
+  for (const staffUid of allStaff.keys()) {
+    const p = await db.doc(`users/${staffUid}`).get();
+    await syncStaffEstateIds(staffUid, (p.get("estateIds") as string[] | undefined) ?? []);
+  }
   return { estateId: estateRef.id };
 });
 
@@ -207,20 +317,25 @@ export const createResident = onCall(async (req) => {
     throw new HttpsError("already-exists", `Rumah ${houseNo} sudah berpenghuni.`);
   }
 
-  const tempPassword = randomBytes(9).toString("base64url");
+  // Email yang sudah punya akun warga: rumah ini ditambahkan ke akun
+  // tersebut (satu akun, beberapa rumah). Selain itu buat akun baru.
+  const linkedUid = await existingWarga(email);
+  let tempPassword: string | null = null;
   let uid: string;
-  try {
-    const user = await getAuth().createUser({ email, password: tempPassword, displayName: name });
-    uid = user.uid;
-  } catch (e: unknown) {
-    const code = (e as { code?: string }).code;
-    if (code === "auth/email-already-exists") {
-      throw new HttpsError("already-exists", "Email ini sudah dipakai akun lain.");
+  if (linkedUid) {
+    uid = linkedUid;
+  } else {
+    tempPassword = randomBytes(9).toString("base64url");
+    try {
+      const user = await getAuth().createUser({ email, password: tempPassword, displayName: name });
+      uid = user.uid;
+    } catch (e: unknown) {
+      const code = (e as { code?: string }).code;
+      if (code === "auth/invalid-email") {
+        throw new HttpsError("invalid-argument", "Format email tidak valid.");
+      }
+      throw e;
     }
-    if (code === "auth/invalid-email") {
-      throw new HttpsError("invalid-argument", "Format email tidak valid.");
-    }
-    throw e;
   }
 
   const residentRef = db.collection(`estates/${estateId}/residents`).doc();
@@ -234,17 +349,20 @@ export const createResident = onCall(async (req) => {
     uid,
     createdAt: FieldValue.serverTimestamp(),
   });
-  batch.set(db.doc(`users/${uid}`), {
-    estateId,
-    role: "warga",
-    residentId: residentRef.id,
-    name,
-    // Password sementara: wajib diganti saat login pertama.
-    mustChangePassword: true,
-  });
+  if (!linkedUid) {
+    batch.set(db.doc(`users/${uid}`), {
+      estateId,
+      role: "warga",
+      residentId: residentRef.id,
+      name,
+      // Password sementara: wajib diganti saat login pertama.
+      mustChangePassword: true,
+    });
+  }
   await batch.commit();
+  if (linkedUid) await addHomeToUser(uid, estateId, residentRef.id);
 
-  return { residentId: residentRef.id, tempPassword };
+  return { residentId: residentRef.id, tempPassword, linked: linkedUid != null };
 });
 
 // ---------------------------------------------------------------------------
@@ -277,8 +395,8 @@ export const createPayment = onCall(async (req) => {
   const me = await profileOf(req.auth?.uid);
   const data = req.data ?? {};
   const estateId = requireText(data.estateId, "estateId");
-  const rid = me.residentId;
-  if (me.role !== "warga" || me.estateId !== estateId || !rid) {
+  const rid = typeof data.residentId === "string" && data.residentId !== "" ? data.residentId : me.residentId;
+  if (!rid || !ownsHome(me, estateId, rid)) {
     throw new HttpsError("permission-denied", "Pembayaran dilakukan oleh warga perumahan ini.");
   }
   const ids = Array.isArray(data.billIds) ? [...new Set(data.billIds.map(String))] : [];
@@ -703,12 +821,7 @@ async function canManageHousehold(
   residentId: string,
 ): Promise<boolean> {
   if (await hasPermission(me, estateId, "residents")) return true;
-  return (
-    me.role === "warga" &&
-    me.estateId === estateId &&
-    me.residentId === residentId &&
-    me.householdRole !== "anggota"
-  );
+  return headOfHome(me, estateId, residentId);
 }
 
 export const addHouseholdMember = onCall(async (req) => {
@@ -735,20 +848,31 @@ export const addHouseholdMember = onCall(async (req) => {
     throw new HttpsError("resource-exhausted", `Maksimal ${MAX_MEMBERS} anggota per rumah.`);
   }
 
-  const tempPassword = randomBytes(9).toString("base64url");
+  // Email yang sudah punya akun warga (mis. punya rumah lain): rumah ini
+  // ditambahkan ke akun tersebut sebagai anggota rumah.
+  const linkedUid = await existingWarga(email);
+  let tempPassword: string | null = null;
   let uid: string;
-  try {
-    const user = await getAuth().createUser({ email, password: tempPassword, displayName: name });
-    uid = user.uid;
-  } catch (e: unknown) {
-    const code = (e as { code?: string }).code;
-    if (code === "auth/email-already-exists") {
-      throw new HttpsError("already-exists", "Email ini sudah dipakai akun lain.");
+  if (linkedUid) {
+    uid = linkedUid;
+    if ((await estate.collection("members").doc(uid).get()).exists) {
+      throw new HttpsError("already-exists", "Akun ini sudah menjadi anggota rumah lain di perumahan ini.");
     }
-    if (code === "auth/invalid-email") {
-      throw new HttpsError("invalid-argument", "Format email tidak valid.");
+    if (ownsHome((await db.doc(`users/${uid}`).get()).data() as Profile, estateId, residentId)) {
+      throw new HttpsError("already-exists", "Akun ini sudah terhubung ke rumah ini.");
     }
-    throw e;
+  } else {
+    tempPassword = randomBytes(9).toString("base64url");
+    try {
+      const user = await getAuth().createUser({ email, password: tempPassword, displayName: name });
+      uid = user.uid;
+    } catch (e: unknown) {
+      const code = (e as { code?: string }).code;
+      if (code === "auth/invalid-email") {
+        throw new HttpsError("invalid-argument", "Format email tidak valid.");
+      }
+      throw e;
+    }
   }
 
   const batch = db.batch();
@@ -761,17 +885,20 @@ export const addHouseholdMember = onCall(async (req) => {
     addedBy: req.auth!.uid,
     createdAt: FieldValue.serverTimestamp(),
   });
-  batch.set(db.doc(`users/${uid}`), {
-    estateId,
-    role: "warga",
-    residentId,
-    name,
-    householdRole: "anggota",
-    relation,
-    mustChangePassword: true,
-  });
+  if (!linkedUid) {
+    batch.set(db.doc(`users/${uid}`), {
+      estateId,
+      role: "warga",
+      residentId,
+      name,
+      householdRole: "anggota",
+      relation,
+      mustChangePassword: true,
+    });
+  }
   await batch.commit();
-  return { uid, tempPassword };
+  if (linkedUid) await addHomeToUser(uid, estateId, residentId, { member: true, relation });
+  return { uid, tempPassword, linked: linkedUid != null };
 });
 
 export const removeHouseholdMember = onCall(async (req) => {
@@ -785,9 +912,33 @@ export const removeHouseholdMember = onCall(async (req) => {
   if (!(await canManageHousehold(me, estateId, String(member.get("residentId"))))) {
     throw new HttpsError("permission-denied", "Hanya kepala keluarga atau pengelola yang bisa menghapus anggota.");
   }
+  const residentId = String(member.get("residentId"));
+  const userRef = db.doc(`users/${uid}`);
+  const profile = (await userRef.get()).data() as Profile | undefined;
+  const key = `${estateId}/${residentId}`;
+  const others = profile ? homeKeysOf(profile).filter((k) => k !== key) : [];
   const batch = db.batch();
   batch.delete(ref);
-  batch.delete(db.doc(`users/${uid}`));
+  if (profile && others.length > 0) {
+    // Akun masih punya rumah lain: cabut rumah ini saja.
+    const next = others[0];
+    const [e, r] = [next.slice(0, next.indexOf("/")), next.slice(next.indexOf("/") + 1)];
+    const isPrimary = profile.estateId === estateId && profile.residentId === residentId;
+    const memberKeys = (profile.memberKeys ?? []).filter((k) => k !== key);
+    batch.set(userRef, {
+      homeKeys: others,
+      memberKeys,
+      homeEstates: [...new Set(others.map((k) => k.slice(0, k.indexOf("/"))))],
+      ...(isPrimary ? {
+        estateId: e,
+        residentId: r,
+        householdRole: memberKeys.includes(next) ? "anggota" : FieldValue.delete(),
+      } : {}),
+    }, { merge: true });
+    await batch.commit();
+    return { ok: true };
+  }
+  batch.delete(userRef);
   await batch.commit();
   try {
     await getAuth().deleteUser(uid);
@@ -839,7 +990,7 @@ export const resetResidentPassword = onCall(async (req) => {
 
   // Hanya akun warga di perumahan ini yang boleh direset (bukan pengelola lain).
   const profile = await db.doc(`users/${uid}`).get();
-  if (!profile.exists || profile.get("role") !== "warga" || profile.get("estateId") !== estateId) {
+  if (!profile.exists || !ownsHome(profile.data() as Profile, estateId, residentId)) {
     throw new HttpsError("permission-denied", "Akun ini bukan warga perumahan Anda.");
   }
 
@@ -887,7 +1038,13 @@ function rupiah(n: number): string {
 async function residentUsers(estateId: string, residentId?: string) {
   let q = db.collection("users").where("estateId", "==", estateId).where("role", "==", "warga");
   if (residentId) q = q.where("residentId", "==", residentId);
-  return (await q.get()).docs;
+  // Akun dengan beberapa rumah: rumah ini ada di homeKeys / homeEstates.
+  const extra = residentId
+    ? db.collection("users").where("homeKeys", "array-contains", `${estateId}/${residentId}`)
+    : db.collection("users").where("homeEstates", "array-contains", estateId);
+  const [a, b] = await Promise.all([q.get(), extra.get()]);
+  const all = new Map([...a.docs, ...b.docs].map((d) => [d.id, d]));
+  return [...all.values()].filter((d) => d.get("role") === "warga");
 }
 
 async function deviceTokens(users: QueryDocumentSnapshot[], kind: NotifKind) {
@@ -1114,26 +1271,101 @@ async function requireOwner(me: Profile & { uid: string }, estateId: string) {
   }
 }
 
+/** Semua perumahan yang dikelola akun ini. */
+function managedEstates(me: Profile): string[] {
+  return Array.from(new Set([me.estateId, ...(me.estateIds ?? [])].filter((x): x is string => !!x)));
+}
+
+/** Perumahan tempat akun ini menjadi pemilik. */
+async function ownedEstates(me: Profile & { uid: string }): Promise<string[]> {
+  const result: string[] = [];
+  for (const id of managedEstates(me)) {
+    if ((await staffAccess(me, id)).owner) result.push(id);
+  }
+  return result;
+}
+
+/** Target perumahan untuk anggota tim: semua milik pemilik, atau pilihan. */
+async function staffTargets(me: Profile & { uid: string }, data: Record<string, unknown>, source: string) {
+  const allEstates = data.allEstates === true;
+  const owned = await ownedEstates(me);
+  const wanted = allEstates
+    ? owned
+    : Array.isArray(data.estateIds) ? [...new Set(data.estateIds.map(String))] : [source];
+  if (wanted.length === 0) throw new HttpsError("invalid-argument", "Pilih minimal satu perumahan.");
+  for (const id of wanted) {
+    if (!owned.includes(id)) {
+      throw new HttpsError("permission-denied", "Anda bukan pemilik salah satu perumahan yang dipilih.");
+    }
+  }
+  return { targets: wanted, allEstates, owned };
+}
+
+type StaffDoc = {
+  name: string;
+  email: string;
+  phone: string;
+  isOwner: boolean;
+  roleId: string | null;
+  roleName: string;
+  permissions: string[];
+};
+
+/** Tulis anggota tim (dan salin levelnya) ke sebuah perumahan. */
+function putStaff(
+  batch: FirebaseFirestore.WriteBatch,
+  estateId: string,
+  uid: string,
+  doc: StaffDoc,
+  allEstates: boolean,
+  addedBy: string,
+) {
+  const estate = db.doc(`estates/${estateId}`);
+  if (doc.roleId) {
+    batch.set(estate.collection("adminRoles").doc(doc.roleId), {
+      name: doc.roleName,
+      permissions: doc.permissions,
+    }, { merge: true });
+  }
+  batch.set(estate.collection("staff").doc(uid), {
+    ...doc,
+    allEstates,
+    addedBy,
+    createdAt: FieldValue.serverTimestamp(),
+  });
+}
+
+/** Samakan daftar perumahan (estateIds) di semua dokumen staff anggota. */
+async function syncStaffEstateIds(uid: string, estateIds: string[]) {
+  const batch = db.batch();
+  for (const id of estateIds) {
+    const ref = db.doc(`estates/${id}/staff/${uid}`);
+    if ((await ref.get()).exists) batch.update(ref, { estateIds });
+  }
+  await batch.commit();
+}
+
 /**
- * Menambah anggota tim pengelola. roleId kosong = pemilik. Email yang sudah
- * punya akun pengelola cukup ditambahkan ke perumahan ini; email baru dibuat
- * akunnya dengan password sementara (wajib diganti saat login).
+ * Menambah anggota tim pengelola ke satu/beberapa/semua perumahan pemilik.
+ * roleId kosong = pemilik. Level diambil dari perumahan estateId dan
+ * disalin ke perumahan lain. Email yang sudah punya akun pengelola cukup
+ * ditambahkan; email baru dibuat akunnya dengan password sementara.
  */
 export const addStaff = onCall(async (req) => {
   const me = await profileOf(req.auth?.uid);
   const data = req.data ?? {};
   const estateId = requireText(data.estateId, "estateId");
   await requireOwner(me, estateId);
+  const { targets, allEstates } = await staffTargets(me, data, estateId);
   const name = requireText(data.name, "Nama", 100);
   const email = requireText(data.email, "Email", 120).toLowerCase();
   const phone = typeof data.phone === "string" ? data.phone.trim().slice(0, 20) : "";
-  const estate = db.doc(`estates/${estateId}`);
 
   let roleName = "";
   let permissions: string[] = [];
   const roleId = typeof data.roleId === "string" && data.roleId !== "" ? data.roleId : null;
   if (roleId) {
-    const role = await estate.collection("adminRoles").doc(roleId).get();
+    const role = await db.doc(`estates/${estateId}/adminRoles/${roleId}`).get();
     if (!role.exists) throw new HttpsError("not-found", "Level akses tidak ditemukan.");
     roleName = String(role.get("name") ?? "");
     permissions = [...(role.get("permissions") ?? [])].sort();
@@ -1141,6 +1373,7 @@ export const addStaff = onCall(async (req) => {
 
   let uid: string;
   let tempPassword: string | null = null;
+  let estateIds: string[];
   try {
     const existing = await getAuth().getUserByEmail(email);
     uid = existing.uid;
@@ -1148,11 +1381,12 @@ export const addStaff = onCall(async (req) => {
     if (profile.exists && profile.get("role") !== "pengelola") {
       throw new HttpsError("already-exists", "Email ini dipakai akun warga. Gunakan email lain.");
     }
+    estateIds = Array.from(new Set([...(profile.get("estateIds") ?? []), ...targets]));
     await db.doc(`users/${uid}`).set(
       {
         role: "pengelola",
-        estateId: profile.get("estateId") ?? estateId,
-        estateIds: FieldValue.arrayUnion(estateId),
+        estateId: profile.get("estateId") ?? targets[0],
+        estateIds,
         name: profile.get("name") ?? name,
       },
       { merge: true },
@@ -1163,27 +1397,82 @@ export const addStaff = onCall(async (req) => {
     tempPassword = randomBytes(9).toString("base64url");
     const user = await getAuth().createUser({ email, password: tempPassword, displayName: name });
     uid = user.uid;
+    estateIds = targets;
     await db.doc(`users/${uid}`).set({
       role: "pengelola",
-      estateId,
-      estateIds: [estateId],
+      estateId: targets[0],
+      estateIds,
       name,
       mustChangePassword: true,
     });
   }
 
-  await estate.collection("staff").doc(uid).set({
-    name,
-    email,
-    phone,
-    isOwner: roleId == null,
-    roleId,
-    roleName,
-    permissions,
-    addedBy: me.uid,
-    createdAt: FieldValue.serverTimestamp(),
-  });
+  const batch = db.batch();
+  for (const id of targets) {
+    putStaff(batch, id, uid, {
+      name, email, phone, isOwner: roleId == null, roleId, roleName, permissions,
+    }, allEstates, me.uid);
+  }
+  await batch.commit();
+  await syncStaffEstateIds(uid, estateIds);
   return { uid, tempPassword };
+});
+
+/**
+ * Pemilik mengatur perumahan yang bisa diakses anggota tim: daftar pilihan
+ * atau semua (termasuk perumahan baru). Data anggota & level disalin dari
+ * perumahan estateId.
+ */
+export const setStaffEstates = onCall(async (req) => {
+  const me = await profileOf(req.auth?.uid);
+  const data = req.data ?? {};
+  const estateId = requireText(data.estateId, "estateId");
+  const uid = requireText(data.uid, "uid");
+  await requireOwner(me, estateId);
+  if (uid === me.uid) throw new HttpsError("failed-precondition", "Tidak bisa mengubah akses sendiri.");
+  const { targets, allEstates, owned } = await staffTargets(me, data, estateId);
+
+  const source = await db.doc(`estates/${estateId}/staff/${uid}`).get();
+  if (!source.exists) throw new HttpsError("not-found", "Anggota tim tidak ditemukan.");
+  const doc: StaffDoc = {
+    name: String(source.get("name") ?? ""),
+    email: String(source.get("email") ?? ""),
+    phone: String(source.get("phone") ?? ""),
+    isOwner: source.get("isOwner") === true,
+    roleId: source.get("roleId") ?? null,
+    roleName: String(source.get("roleName") ?? ""),
+    permissions: [...(source.get("permissions") ?? [])],
+  };
+
+  const batch = db.batch();
+  const removed: string[] = [];
+  for (const id of owned) {
+    const ref = db.doc(`estates/${id}/staff/${uid}`);
+    if (targets.includes(id)) {
+      putStaff(batch, id, uid, doc, allEstates, me.uid);
+      continue;
+    }
+    const snap = await ref.get();
+    if (!snap.exists) continue;
+    if (snap.get("isOwner") === true) {
+      const owners = await db.collection(`estates/${id}/staff`).where("isOwner", "==", true).count().get();
+      if (owners.data().count <= 1) {
+        throw new HttpsError("failed-precondition", "Harus ada minimal satu pemilik di setiap perumahan.");
+      }
+    }
+    batch.delete(ref);
+    removed.push(id);
+  }
+
+  const profileRef = db.doc(`users/${uid}`);
+  const profile = await profileRef.get();
+  const current: string[] = [profile.get("estateId"), ...(profile.get("estateIds") ?? [])].filter(Boolean);
+  const estateIds = Array.from(new Set([...current.filter((x) => !removed.includes(x)), ...targets]));
+  const primary = estateIds.includes(profile.get("estateId")) ? profile.get("estateId") : estateIds[0];
+  batch.set(profileRef, { estateIds, estateId: primary }, { merge: true });
+  await batch.commit();
+  await syncStaffEstateIds(uid, estateIds);
+  return { ok: true };
 });
 
 /** Mengeluarkan anggota tim dari perumahan (akun tetap ada bila masih
@@ -1221,7 +1510,9 @@ export const removeStaff = onCall(async (req) => {
     }
   } else {
     const list = [...remaining];
-    await profileRef.update({ estateIds: list, estateId: list[0] });
+    const primary = list.includes(profile.get("estateId")) ? profile.get("estateId") : list[0];
+    await profileRef.update({ estateIds: list, estateId: primary });
+    await syncStaffEstateIds(uid, list);
   }
   return { ok: true };
 });

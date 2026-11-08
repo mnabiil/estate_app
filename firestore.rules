@@ -3,7 +3,9 @@ rules_version = '2';
 // Aturan akses Amani Living.
 // - Profil login ada di /users/{uid}:
 //     { estateId, estateIds?, role: 'warga'|'pengelola'|'pendaftar', residentId?,
-//       name, householdRole?: 'anggota', relation? }
+//       name, householdRole?: 'anggota', relation?,
+//       homeKeys?: ['estateId/residentId'], homeEstates?: [estateId],
+//       memberKeys?: ['estateId/residentId'] }  (satu akun, beberapa rumah)
 //   Kepala keluarga & anggota rumah berbagi residentId yang sama, sehingga
 //   aturan "data milik rumah ini" berlaku untuk semuanya.
 //   Pengelola bisa mengelola beberapa perumahan lewat estateIds (estateId =
@@ -32,7 +34,24 @@ service cloud.firestore {
       return signedIn()
         && me().role in ['warga', 'pengelola']
         && (me().estateId == estateId
-          || (me().role == 'pengelola' && estateId in me().get('estateIds', [])));
+          || (me().role == 'pengelola' && estateId in me().get('estateIds', []))
+          || (me().role == 'warga' && estateId in me().get('homeEstates', [])));
+    }
+
+    // Satu akun warga bisa punya beberapa rumah: rumah utama
+    // (estateId/residentId) + homeKeys ["estateId/residentId", ...].
+    function myHome(estateId, residentId) {
+      return (me().estateId == estateId && me().get('residentId', '') == residentId)
+        || (estateId + '/' + residentId) in me().get('homeKeys', []);
+    }
+
+    // Kepala keluarga rumah tersebut (bukan anggota rumah).
+    function headOf(estateId, residentId) {
+      return myHome(estateId, residentId)
+        && !((estateId + '/' + residentId) in me().get('memberKeys', []))
+        && !(me().estateId == estateId
+          && me().get('residentId', '') == residentId
+          && me().get('householdRole', '') == 'anggota');
     }
 
     function isAdmin(estateId) {
@@ -59,13 +78,13 @@ service cloud.firestore {
     }
 
     function ownsExisting(estateId) {
-      return inEstate(estateId) && resource.data.residentId == me().residentId;
+      return inEstate(estateId) && myHome(estateId, resource.data.residentId);
     }
 
     function ownsNew(estateId) {
       return inEstate(estateId)
         && me().role == 'warga'
-        && request.resource.data.residentId == me().residentId;
+        && myHome(estateId, request.resource.data.residentId);
     }
 
     function onlyChanges(keys) {
@@ -213,7 +232,7 @@ service cloud.firestore {
 
       match /residents/{residentId} {
         allow read: if isAdmin(estateId)
-          || (inEstate(estateId) && me().residentId == residentId);
+          || (inEstate(estateId) && myHome(estateId, residentId));
         // Membuat warga baru (beserta akunnya) lewat Cloud Function createResident.
         allow create, delete: if false;
         // Pengelola boleh mengubah data warga, termasuk mengatur / memindah
@@ -314,9 +333,8 @@ service cloud.firestore {
         function headOfTargetHousehold() {
           return inEstate(estateId)
             && me().role == 'warga'
-            && me().get('householdRole', '') != 'anggota'
             && resource.data.kind == 'gabung'
-            && resource.data.residentId == me().residentId;
+            && headOf(estateId, resource.data.residentId);
         }
 
         allow read: if isAdmin(estateId)
@@ -419,7 +437,7 @@ service cloud.firestore {
             && request.resource.data.get('photoUrls', []).size() <= 3)
           && renovation().residentId == request.resource.data.residentId
           && (can(estateId, 'renovationLogs') || can(estateId, 'renovations')
-            || request.resource.data.residentId == me().residentId)
+            || myHome(estateId, request.resource.data.residentId))
           && request.resource.data.direction in ['masuk', 'keluar']
           && request.resource.data.item is string
           && request.resource.data.item.size() > 0

@@ -204,7 +204,12 @@ class _ResidentsScreenState extends State<ResidentsScreen> {
     }
     if (failed || !mounted) return;
     if (tempPassword == null) {
-      showSnack(context, 'Warga $n ditambahkan');
+      showSnack(
+          context,
+          store.isFirebase
+              ? 'Warga $n ditambahkan. Bila emailnya sudah punya akun warga, '
+                  'rumah ini ditambahkan ke akun tersebut.'
+              : 'Warga $n ditambahkan');
       return;
     }
     await showDialog<void>(

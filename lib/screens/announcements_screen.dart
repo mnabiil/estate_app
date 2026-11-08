@@ -11,40 +11,63 @@ class AnnouncementsScreen extends StatelessWidget {
   Future<void> _add(BuildContext context) async {
     final title = TextEditingController();
     final body = TextEditingController();
+    var targets = <String>{
+      if (store.activeEstateId != null) store.activeEstateId!
+    };
     final ok = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Pengumuman baru'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: title,
-              decoration: const InputDecoration(labelText: 'Judul'),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) => AlertDialog(
+          title: const Text('Pengumuman baru'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                TextField(
+                  controller: title,
+                  decoration: const InputDecoration(labelText: 'Judul'),
+                ),
+                TextField(
+                  controller: body,
+                  minLines: 3,
+                  maxLines: 6,
+                  decoration:
+                      const InputDecoration(labelText: 'Isi pengumuman'),
+                ),
+                if (store.estates.length > 1) ...[
+                  const SizedBox(height: 16),
+                  Text('Kirim ke perumahan',
+                      style: Theme.of(ctx).textTheme.labelLarge),
+                  EstateChecklist(
+                    selected: targets,
+                    onChanged: (v) => setLocal(() => targets = v),
+                  ),
+                ],
+              ],
             ),
-            TextField(
-              controller: body,
-              minLines: 3,
-              maxLines: 6,
-              decoration: const InputDecoration(labelText: 'Isi pengumuman'),
-            ),
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Batal')),
+            FilledButton(
+                onPressed: targets.isEmpty
+                    ? null
+                    : () => Navigator.pop(ctx, true),
+                child: const Text('Kirim')),
           ],
         ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Batal')),
-          FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Kirim')),
-        ],
       ),
     );
     if (ok == true && title.text.trim().isNotEmpty && context.mounted) {
       await runAction(
         context,
-        store.addAnnouncement(title.text.trim(), body.text.trim()),
-        success: 'Pengumuman dikirim ke semua warga',
+        store.addAnnouncement(title.text.trim(), body.text.trim(),
+            estateIds: targets.toList()),
+        success: targets.length > 1
+            ? 'Pengumuman dikirim ke ${targets.length} perumahan'
+            : 'Pengumuman dikirim ke semua warga',
       );
     }
   }

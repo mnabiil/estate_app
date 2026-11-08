@@ -179,10 +179,24 @@ class EstateStore extends ChangeNotifier {
       if (role == Role.pengelola)
         ...((d['estateIds'] as List<dynamic>?) ?? const []).whereType<String>(),
     }.toList();
+    // Warga: bisa punya beberapa rumah (di satu/beberapa perumahan).
+    final homeList =
+        role == Role.warga ? HomeRef.fromProfile(d) : const <HomeRef>[];
+    if (homeList.isNotEmpty) {
+      ids
+        ..clear()
+        ..addAll({for (final h in homeList) h.estateId});
+    }
     if (ids.isEmpty) {
       throw StateError('Akun ini belum terhubung ke perumahan mana pun.');
     }
-    _estateId = ids.first;
+    final active = homeList.where((h) => h.key == _activeHomeKey).firstOrNull ??
+        homeList.firstOrNull;
+    _activeHomeKey = active?.key;
+    homes
+      ..clear()
+      ..addAll(homeList);
+    _estateId = active?.estateId ?? ids.first;
     final relation = d['relation'] as String?;
     final prefs = (d['notifPrefs'] as Map<String, dynamic>?) ?? const {};
     notifyAnnouncements = prefs['announcements'] != false;
@@ -196,6 +210,7 @@ class EstateStore extends ChangeNotifier {
       isPrimary: d['householdRole'] != 'anggota',
       relation: relation == null ? null : MemberRelation.values.byName(relation),
     );
+    if (active != null) currentUser = currentUser!.forHome(active);
     estates
       ..clear()
       ..addAll(ids.map((id) => EstateInfo(id: id, name: 'Perumahan')));
@@ -260,6 +275,7 @@ class EstateStore extends ChangeNotifier {
 
   void _listen() {
     _cancelSubs();
+    syncProblems.clear();
     final rid = currentUser!.residentId;
 
     // Warga hanya boleh membaca dokumen miliknya (lihat firestore.rules),
@@ -360,6 +376,7 @@ class EstateStore extends ChangeNotifier {
           items.add(parse(d.id, d.data()));
         } catch (e) {
           debugPrint('Dokumen ${d.reference.path} dilewati: $e');
+          _reportProblem('Dokumen ${d.reference.path} tidak bisa dibaca: $e');
         }
       }
       target
@@ -369,7 +386,21 @@ class EstateStore extends ChangeNotifier {
     }, onError: _onStreamError));
   }
 
-  void _onStreamError(Object e) => debugPrint('Firestore stream error: $e');
+  void _onStreamError(Object e) {
+    debugPrint('Firestore stream error: $e');
+    _reportProblem('Gagal memuat data: $e');
+  }
+
+  /// Masalah saat memuat data (ditolak aturan keamanan, dokumen rusak).
+  /// Ditampilkan ke pengelola agar mudah dilacak.
+  final List<String> syncProblems = [];
+
+  void _reportProblem(String message) {
+    if (syncProblems.contains(message)) return;
+    syncProblems.add(message);
+    if (syncProblems.length > 20) syncProblems.removeAt(0);
+    notifyListeners();
+  }
 
   void _cancelSubs() {
     for (final s in _subs) {
@@ -507,11 +538,83 @@ class EstateStore extends ChangeNotifier {
   /// Menambah anggota tim pengelola. [roleId] null = pemilik.
   /// Mode Firebase: mengembalikan password sementara bila akun baru dibuat
   /// (null bila email sudah punya akun pengelola).
+  /// Mode demo: data perumahan yang sedang tidak aktif (dibuat bila belum).
+  _DemoEstate _demoSnapshot(String id) => _demoEstates.putIfAbsent(
+      id, () => _DemoEstate.empty(estateNameOf(id)));
+
+  List<StaffMember> _staffListOf(String estateId) =>
+      estateId == _estateId ? staff : _demoSnapshot(estateId).staff;
+
+  /// Perumahan yang bisa diakses anggota tim [m].
+  List<String> staffEstateIds(StaffMember m) {
+    if (m.allEstates) return [for (final e in estates) e.id];
+    if (isFirebase) {
+      final known = [
+        for (final e in estates)
+          if (m.estateIds.contains(e.id)) e.id,
+      ];
+      return known.isEmpty ? [if (_estateId != null) _estateId!] : known;
+    }
+    return [
+      for (final e in estates)
+        if ((e.id == _estateId
+                ? staff
+                : _demoEstates[e.id]?.staff ?? const <StaffMember>[])
+            .any((x) => x.id == m.id))
+          e.id,
+    ];
+  }
+
+  String staffEstatesLabel(StaffMember m) {
+    if (m.allEstates) return 'Semua perumahan';
+    final ids = staffEstateIds(m);
+    return ids.length == 1 ? estateNameOf(ids.first) : '${ids.length} perumahan';
+  }
+
+  /// Target perumahan: semua, atau daftar terpilih (minimal satu).
+  List<String> _staffTargets(List<String>? estateIds, bool allEstates) {
+    final all = [for (final e in estates) e.id];
+    final targets = allEstates
+        ? all
+        : [for (final id in (estateIds ?? [_estateId!])) if (all.contains(id)) id];
+    if (targets.isEmpty) throw StateError('Pilih minimal satu perumahan.');
+    return targets;
+  }
+
+  /// Mode demo: salin anggota (dan levelnya) ke perumahan [estateId].
+  void _demoPutStaff(String estateId, StaffMember src, AdminRole? role) {
+    final list = _staffListOf(estateId);
+    list.removeWhere((x) => x.id == src.id);
+    list.add(StaffMember(
+      id: src.id,
+      name: src.name,
+      email: src.email,
+      phone: src.phone,
+      isOwner: src.isOwner,
+      roleId: src.roleId,
+      roleName: src.roleName,
+      permissions: src.permissions,
+      allEstates: src.allEstates,
+    ));
+    if (role != null) {
+      final roles =
+          estateId == _estateId ? adminRoles : _demoSnapshot(estateId).adminRoles;
+      if (!roles.any((r) => r.id == role.id)) {
+        roles.add(AdminRole(
+            id: role.id, name: role.name, permissions: {...role.permissions}));
+      }
+    }
+  }
+
+  /// Pemilik menambah anggota tim ke satu/beberapa/semua perumahan.
+  /// Level akses diambil dari perumahan aktif dan disalin ke perumahan lain.
   Future<String?> addStaff({
     required String name,
     required String email,
     String phone = '',
     String? roleId,
+    List<String>? estateIds,
+    bool allEstates = false,
   }) async {
     _requireOwner();
     final role = adminRoleById(roleId);
@@ -523,8 +626,9 @@ class EstateStore extends ChangeNotifier {
     if (staff.any((m) => m.email.toLowerCase() == mail)) {
       throw StateError('$mail sudah ada di tim.');
     }
+    final targets = _staffTargets(estateIds, allEstates);
     if (!isFirebase) {
-      staff.add(StaffMember(
+      final m = StaffMember(
         id: _newId('S'),
         name: name.trim(),
         email: mail,
@@ -533,18 +637,58 @@ class EstateStore extends ChangeNotifier {
         roleId: role?.id,
         roleName: role?.name ?? '',
         permissions: role?.permissions ?? const {},
-      ));
+        allEstates: allEstates,
+      );
+      for (final id in targets) {
+        _demoPutStaff(id, m, role);
+      }
       notifyListeners();
       return null;
     }
     final res = await _fn!.httpsCallable('addStaff').call<Map<String, dynamic>>({
       'estateId': _estateId,
+      'estateIds': targets,
+      'allEstates': allEstates,
       'name': name.trim(),
       'email': mail,
       'phone': phone.trim(),
       'roleId': roleId,
     });
     return res.data['tempPassword'] as String?;
+  }
+
+  /// Pemilik mengatur perumahan yang bisa diakses anggota tim.
+  Future<void> setStaffEstates(String uid,
+      {List<String>? estateIds, bool allEstates = false}) async {
+    _requireOwner();
+    final m = staff.where((x) => x.id == uid).firstOrNull;
+    if (m == null) throw StateError('Anggota tim tidak ditemukan.');
+    if (uid == _myUid) {
+      throw StateError('Tidak bisa mengubah akses perumahan sendiri.');
+    }
+    final targets = _staffTargets(estateIds, allEstates);
+    if (!targets.contains(_estateId) && m.isOwner && _ownerCount <= 1) {
+      throw StateError('Harus ada minimal satu pemilik di perumahan ini.');
+    }
+    if (!isFirebase) {
+      final role = adminRoleById(m.roleId);
+      m.allEstates = allEstates;
+      for (final e in estates) {
+        if (targets.contains(e.id)) {
+          _demoPutStaff(e.id, m, role);
+        } else {
+          _staffListOf(e.id).removeWhere((x) => x.id == uid);
+        }
+      }
+      notifyListeners();
+      return;
+    }
+    await _fn!.httpsCallable('setStaffEstates').call<void>({
+      'estateId': _estateId,
+      'uid': uid,
+      'estateIds': targets,
+      'allEstates': allEstates,
+    });
   }
 
   /// Mengganti level akses anggota tim ([roleId] null = jadikan pemilik).
@@ -626,6 +770,81 @@ class EstateStore extends ChangeNotifier {
       currentUser = AppUser(
           name: r.name, role: Role.warga, residentId: r.id, email: r.email);
     }
+    _demoHomes();
+    notifyListeners();
+  }
+
+  /// Mode demo: rumah lain milik akun yang sama dicari dari data warga di
+  /// semua perumahan contoh (email atau No. HP sama).
+  void _demoHomes() {
+    homes.clear();
+    final user = currentUser;
+    if (user == null || user.role != Role.warga || user.residentId == null) {
+      _activeHomeKey = null;
+      return;
+    }
+    final me = currentResident;
+    bool same(Resident r) =>
+        r.id == me?.id ||
+        (me != null &&
+            ((me.email ?? '').isNotEmpty && r.email == me.email ||
+                me.phone.isNotEmpty && r.phone == me.phone));
+    for (final e in estates) {
+      final list = e.id == _estateId
+          ? residents
+          : _demoEstates[e.id]?.residents ?? const <Resident>[];
+      for (final r in list) {
+        if (user.isPrimary && same(r) || r.id == user.residentId && e.id == _estateId) {
+          homes.add(HomeRef(
+            estateId: e.id,
+            residentId: r.id,
+            label: '${r.houseNo} · ${e.name}',
+            isHead: user.isPrimary,
+            relation: user.relation,
+          ));
+        }
+      }
+    }
+    _activeHomeKey = '$_estateId/${user.residentId}';
+  }
+
+  /// Rumah-rumah milik akun warga ini (minimal satu).
+  final List<HomeRef> homes = [];
+  String? _activeHomeKey;
+
+  HomeRef? get activeHome =>
+      homes.where((h) => h.key == _activeHomeKey).firstOrNull;
+
+  /// Label rumah untuk ditampilkan, mis. "A1/05 · Griya Asri".
+  String homeLabel(HomeRef h) {
+    if (h.label.isNotEmpty) return h.label;
+    final house = h.key == _activeHomeKey ? currentResident?.houseNo : null;
+    final estate = estateNameOf(h.estateId);
+    return house == null ? estate : '$house · $estate';
+  }
+
+  /// Warga dengan beberapa rumah: pindah rumah aktif. Tagihan, keluhan,
+  /// tamu, renovasi, dan pembayaran mengikuti rumah yang dipilih.
+  Future<void> switchHome(String key) async {
+    final h = homes.where((x) => x.key == key).firstOrNull;
+    final user = currentUser;
+    if (h == null || user == null || isAdmin) {
+      throw StateError('Rumah tidak ditemukan.');
+    }
+    if (key == _activeHomeKey) return;
+    if (!isFirebase) {
+      if (h.estateId != _estateId) await switchEstate(h.estateId);
+      _activeHomeKey = key;
+      currentUser = user.forHome(h);
+      notifyListeners();
+      return;
+    }
+    _activeHomeKey = key;
+    _estateId = h.estateId;
+    currentUser = user.forHome(h);
+    _clearData();
+    estateName = estateNameOf(h.estateId);
+    _listen();
     notifyListeners();
   }
 
@@ -647,6 +866,8 @@ class EstateStore extends ChangeNotifier {
 
   Future<void> logout() async {
     currentUser = null;
+    homes.clear();
+    _activeHomeKey = null;
     myRegistration = null;
     _demoRegistrantId = null;
     _demoStaffId = null;
@@ -2015,6 +2236,12 @@ class EstateStore extends ChangeNotifier {
         ..depositSmall = depositSmall
         ..depositLarge = depositLarge
         ..billDueDay = billDueDay;
+      // Anggota tim berakses "semua perumahan" ikut ke perumahan baru.
+      final me = myStaff;
+      if (me != null) _demoPutStaff(id, me, null);
+      for (final m in staff.where((m) => m.allEstates && m.id != me?.id).toList()) {
+        _demoPutStaff(id, m, adminRoleById(m.roleId));
+      }
     } else {
       final res =
           await _fn!.httpsCallable('createEstate').call<Map<String, dynamic>>({
@@ -2473,6 +2700,7 @@ class EstateStore extends ChangeNotifier {
     }
     final res = await _fn!.httpsCallable('createPayment').call<Map<String, dynamic>>({
       'estateId': _estateId,
+      'residentId': rid,
       'billIds': billIds,
     });
     final id = res.data['paymentId'] as String;
@@ -2739,25 +2967,38 @@ class EstateStore extends ChangeNotifier {
 
   // ---------- Pengumuman ----------
 
-  Future<void> addAnnouncement(String title, String body) async {
+  /// Pengelola membuat pengumuman untuk satu atau beberapa perumahan
+  /// (default: perumahan aktif). Hak "pengumuman" dicek per perumahan.
+  Future<void> addAnnouncement(String title, String body,
+      {List<String>? estateIds}) async {
     _require(AdminPermission.announcements);
+    final all = [for (final e in estates) e.id];
+    final targets = [
+      for (final id in (estateIds ?? [_estateId!])) if (all.contains(id)) id
+    ];
+    if (targets.isEmpty) throw StateError('Pilih minimal satu perumahan.');
     if (!isFirebase) {
-      announcements.insert(
-        0,
-        Announcement(
+      for (final id in targets) {
+        final a = Announcement(
             id: _newId('P'),
             title: title,
             body: body,
-            createdAt: DateTime.now()),
-      );
+            createdAt: DateTime.now());
+        (id == _estateId ? announcements : _demoSnapshot(id).announcements)
+            .insert(0, a);
+      }
       notifyListeners();
       return;
     }
-    await _est.collection('announcements').add({
-      'title': title,
-      'body': body,
-      'createdAt': FieldValue.serverTimestamp(),
-    });
+    final batch = _db!.batch();
+    for (final id in targets) {
+      batch.set(_db!.collection('estates').doc(id).collection('announcements').doc(), {
+        'title': title,
+        'body': body,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+    }
+    await batch.commit();
   }
 
   // ---------- Data contoh (mode demo) ----------
@@ -2972,6 +3213,28 @@ class EstateStore extends ChangeNotifier {
         number: n.toString().padLeft(2, '0'),
       ));
     }
+    // Budi Santoso juga punya rumah di Amani Residence (satu akun, dua unit).
+    final budiHere = Resident(
+      id: 'R-AM1',
+      name: 'Budi Santoso',
+      houseNo: 'M1/08',
+      houseId: d.houses.last.id,
+      phone: '0812-3456-7890',
+    );
+    d.residents.add(budiHere);
+    final now = DateTime.now();
+    d.bills.add(Bill(
+      id: _newId('B'),
+      residentId: budiHere.id,
+      period: DateTime(now.year, now.month),
+      amount: d.fee,
+    ));
+    // Pak Hendra juga pemilik Amani Residence.
+    d.staff.add(StaffMember(
+        id: 'S-HENDRA',
+        name: 'Pak Hendra',
+        email: 'hendra@contoh.id',
+        isOwner: true));
     _demoEstates['amani-residence'] = d;
   }
 

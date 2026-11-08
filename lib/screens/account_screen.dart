@@ -50,6 +50,7 @@ class AccountScreen extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 24),
+          if (store.isAdmin) const SyncProblemsCard(),
           if (store.isAdmin)
             ListTile(
               leading: const Icon(Icons.location_city_outlined),
@@ -64,6 +65,17 @@ class AccountScreen extends StatelessWidget {
               onTap: store.estates.length > 1
                   ? () => pickActiveEstate(context)
                   : null,
+            ),
+          if (!store.isAdmin && store.homes.length > 1)
+            ListTile(
+              leading: const Icon(Icons.home_work_outlined),
+              title: Text(store.activeHome == null
+                  ? 'Rumah ${resident?.houseNo ?? ''}'
+                  : store.homeLabel(store.activeHome!)),
+              subtitle: Text('Rumah aktif · ketuk untuk ganti '
+                  '(${store.homes.length} rumah)'),
+              trailing: const Icon(Icons.swap_horiz),
+              onTap: () => pickActiveHome(context),
             ),
           if (resident != null)
             ListTile(

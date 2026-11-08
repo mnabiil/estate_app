@@ -85,6 +85,7 @@ class _RenovationsScreenState extends State<RenovationsScreen> {
                 ),
           body: Column(
             children: [
+              if (isAdmin) const SyncProblemsCard(),
               FilterBar<_Filter>(
                 options: const {
                   _Filter.aktif: 'Aktif',
