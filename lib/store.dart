@@ -3057,8 +3057,6 @@ class EstateStore extends ChangeNotifier {
           roleName: satpam.name,
           permissions: satpam.permissions),
     ]);
-    // Pak Hendra juga pemilik Amani Residence (perumahan contoh kedua).
-    _demoPutStaff('amani-residence', staff.first, null);
   }
 
   /// Contoh pendaftaran warga mandiri yang menunggu verifikasi.
@@ -3122,6 +3120,12 @@ class EstateStore extends ChangeNotifier {
         number: n.toString().padLeft(2, '0'),
       ));
     }
+    // Pak Hendra juga pemilik Amani Residence.
+    d.staff.add(StaffMember(
+        id: 'S-HENDRA',
+        name: 'Pak Hendra',
+        email: 'hendra@contoh.id',
+        isOwner: true));
     _demoEstates['amani-residence'] = d;
   }
 
