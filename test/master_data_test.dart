@@ -92,7 +92,8 @@ void main() {
     await s.switchEstate('amani-residence');
     expect(s.estateName, 'Amani Residence');
     expect(s.fee, 300000);
-    expect(s.residents, isEmpty);
+    // Satu-satunya warga: rumah kedua milik akun Budi.
+    expect(s.residents.single.name, 'Budi Santoso');
     expect(s.clusters.single.name, 'Cluster Melati');
     expect(s.houses, hasLength(8));
 

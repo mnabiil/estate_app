@@ -77,6 +77,18 @@ Level akses disalin ke tiap perumahan. Pengelola memilih perumahan aktif di **Ak
 `firestore.rules` (`can(estateId, perm)`) dan Cloud Functions. Pengelola lama yang belum tercatat
 di `staff` dianggap pemilik.
 
+## Satu akun, beberapa rumah
+
+Satu akun warga bisa punya beberapa unit di satu atau beberapa perumahan. Pengelola cukup
+menambah warga (atau anggota rumah) dengan **email yang sudah punya akun warga**: rumah baru
+ditambahkan ke akun itu, tanpa akun/password baru. Warga memilih **rumah aktif** di Akun;
+tagihan, keluhan, tamu, renovasi & pembayaran mengikuti rumah aktif. Peran bisa berbeda per
+rumah (kepala keluarga di rumah A, anggota/penyewa di rumah B).
+
+Profil: rumah utama tetap `estateId`/`residentId`; rumah lain di `homeKeys`
+(`"estateId/residentId"`), `homeEstates`, `memberKeys` (rumah sebagai anggota), `homeLabels`,
+`homeRelations`. Akun lama tidak perlu dimigrasi.
+
 ## Pembayaran IPL (transfer + kode unik)
 
 Pembayaran **hanya transfer** ke rekening perumahan (Tagihan → ikon bank, hak *tagihan*;

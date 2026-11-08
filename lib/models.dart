@@ -4,6 +4,62 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 /// bisa mengakses data perumahan.
 enum Role { warga, pengelola, pendaftar }
 
+/// Satu rumah milik akun warga. Satu akun bisa punya beberapa rumah di
+/// satu atau beberapa perumahan (`users/{uid}.homeKeys`).
+class HomeRef {
+  const HomeRef({
+    required this.estateId,
+    required this.residentId,
+    this.label = '',
+    this.isHead = true,
+    this.relation,
+  });
+
+  final String estateId;
+  final String residentId;
+
+  /// Mis. "A1/05 · Griya Asri" (bisa kosong untuk akun lama).
+  final String label;
+
+  /// Kepala keluarga rumah ini (false = anggota rumah).
+  final bool isHead;
+  final MemberRelation? relation;
+
+  String get key => '$estateId/$residentId';
+
+  /// Rumah dari profil Firestore: rumah utama (estateId/residentId) +
+  /// homeKeys. memberKeys = rumah tempat akun ini menjadi anggota.
+  static List<HomeRef> fromProfile(Map<String, dynamic> d) {
+    final e = d['estateId'], r = d['residentId'];
+    final primary = e is String && r is String ? '$e/$r' : null;
+    final keys = <String>{
+      if (primary != null) primary,
+      ...((d['homeKeys'] as List<dynamic>?) ?? const []).whereType<String>(),
+    };
+    final members = {
+      ...((d['memberKeys'] as List<dynamic>?) ?? const []).whereType<String>(),
+    };
+    final labels =
+        (d['homeLabels'] as Map<dynamic, dynamic>?) ?? const <String, dynamic>{};
+    final relations = (d['homeRelations'] as Map<dynamic, dynamic>?) ??
+        const <String, dynamic>{};
+    MemberRelation? rel(Object? v) =>
+        v is String ? MemberRelation.values.asNameMap()[v] : null;
+    return [
+      for (final k in keys)
+        if (k.contains('/'))
+          HomeRef(
+            estateId: k.substring(0, k.indexOf('/')),
+            residentId: k.substring(k.indexOf('/') + 1),
+            label: labels[k] as String? ?? '',
+            isHead: !members.contains(k) &&
+                !(k == primary && d['householdRole'] == 'anggota'),
+            relation: k == primary ? rel(d['relation']) : rel(relations[k]),
+          ),
+    ];
+  }
+}
+
 class AppUser {
   const AppUser({
     required this.name,
@@ -32,6 +88,17 @@ class AppUser {
   /// Akun dibuat pengelola dengan password sementara: wajib diganti saat
   /// login pertama.
   final bool mustChangePassword;
+
+  /// Akun yang sama di rumah lain (satu akun, beberapa unit).
+  AppUser forHome(HomeRef h) => AppUser(
+        name: name,
+        role: role,
+        residentId: h.residentId,
+        email: email,
+        isPrimary: h.isHead,
+        relation: h.relation,
+        mustChangePassword: mustChangePassword,
+      );
 
   AppUser copyWith({bool? mustChangePassword}) => AppUser(
         name: name,

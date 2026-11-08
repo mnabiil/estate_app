@@ -377,3 +377,36 @@ class SyncProblemsCard extends StatelessWidget {
     );
   }
 }
+
+/// Warga dengan beberapa rumah: pilih rumah aktif.
+Future<void> pickActiveHome(BuildContext context) async {
+  final key = await showModalBottomSheet<String>(
+    context: context,
+    showDragHandle: true,
+    builder: (ctx) => SafeArea(
+      child: ListView(
+        shrinkWrap: true,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
+            child: Text('Pilih rumah', style: Theme.of(ctx).textTheme.titleMedium),
+          ),
+          for (final h in store.homes)
+            ListTile(
+              leading: Icon(h.key == store.activeHome?.key
+                  ? Icons.radio_button_checked
+                  : Icons.radio_button_unchecked),
+              title: Text(store.homeLabel(h)),
+              subtitle: Text(h.isHead
+                  ? 'Kepala keluarga'
+                  : 'Anggota rumah${h.relation != null ? ' · ${h.relation!.label}' : ''}'),
+              onTap: () => Navigator.pop(ctx, h.key),
+            ),
+          const SizedBox(height: 8),
+        ],
+      ),
+    ),
+  );
+  if (key == null || key == store.activeHome?.key || !context.mounted) return;
+  await runAction(context, store.switchHome(key), success: 'Rumah aktif diganti');
+}

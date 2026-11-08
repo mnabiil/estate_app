@@ -10,6 +10,13 @@ service firebase.storage {
       return firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data;
     }
 
+    // Rumah milik akun warga (rumah utama atau salah satu homeKeys).
+    function myHome(estateId, residentId) {
+      return me().role == 'warga'
+        && ((me().estateId == estateId && me().get('residentId', '') == residentId)
+          || (estateId + '/' + residentId) in me().get('homeKeys', []));
+    }
+
     // Pengelola bisa mengelola beberapa perumahan (estateIds).
     function adminOf(estateId) {
       return me().role == 'pengelola'
@@ -32,13 +39,11 @@ service firebase.storage {
     match /estates/{estateId}/renovations/{residentId}/{renovationId}/{allPaths=**} {
       allow read: if request.auth != null
         && (adminOf(estateId)
-          || (me().estateId == estateId && me().residentId == residentId));
+          || myHome(estateId, residentId));
 
       allow create: if request.auth != null
         && (adminOf(estateId)
-          || (me().role == 'warga'
-            && me().estateId == estateId
-            && me().residentId == residentId))
+          || myHome(estateId, residentId))
         && request.resource.size < 10 * 1024 * 1024
         && (request.resource.contentType.matches('image/.*')
           || request.resource.contentType == 'application/pdf'
@@ -51,12 +56,10 @@ service firebase.storage {
     match /estates/{estateId}/payments/{residentId}/{paymentId}/{fileName} {
       allow read: if request.auth != null
         && (adminOf(estateId)
-          || (me().estateId == estateId && me().residentId == residentId));
+          || myHome(estateId, residentId));
 
       allow create: if request.auth != null
-        && me().estateId == estateId
-        && me().role == 'warga'
-        && me().residentId == residentId
+        && myHome(estateId, residentId)
         && request.resource.size < 5 * 1024 * 1024
         && request.resource.contentType.matches('image/.*');
 
@@ -66,12 +69,10 @@ service firebase.storage {
     match /estates/{estateId}/complaints/{residentId}/{complaintId}/{fileName} {
       allow read: if request.auth != null
         && (adminOf(estateId)
-          || (me().estateId == estateId && me().residentId == residentId));
+          || myHome(estateId, residentId));
 
       allow create: if request.auth != null
-        && me().estateId == estateId
-        && me().role == 'warga'
-        && me().residentId == residentId
+        && myHome(estateId, residentId)
         && fileName.matches('[0-2]\\.jpg')
         && request.resource.size < 5 * 1024 * 1024
         && request.resource.contentType.matches('image/.*');

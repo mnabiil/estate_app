@@ -72,4 +72,43 @@ void main() {
     await s.switchEstate('griya-asri');
     expect(s.announcements.map((a) => a.title), isNot(contains('Air mati')));
   });
+
+  test('satu akun warga punya rumah di dua perumahan', () async {
+    final w = EstateStore()..login(Role.warga, residentId: 'R1');
+    expect(w.homes, hasLength(2));
+    final other = w.homes.firstWhere((h) => h.estateId == 'amani-residence');
+    expect(w.homeLabel(other), 'M1/08 · Amani Residence');
+    final griyaBills = w.billsForResident('R1').length;
+
+    await w.switchHome(other.key);
+    expect(w.estateName, 'Amani Residence');
+    expect(w.currentUser!.residentId, 'R-AM1');
+    expect(w.currentResident!.houseNo, 'M1/08');
+    expect(w.unpaidBillsOf('R-AM1'), hasLength(1));
+
+    await w.switchHome(w.homes.firstWhere((h) => h.residentId == 'R1').key);
+    expect(w.currentUser!.residentId, 'R1');
+    expect(w.billsForResident('R1'), hasLength(griyaBills));
+  });
+
+  test('profil Firestore: rumah utama + homeKeys, peran per rumah', () {
+    final homes = HomeRef.fromProfile({
+      'estateId': 'griya',
+      'residentId': 'R1',
+      'homeKeys': ['griya/R1', 'kepuh/R9', 'kepuh/R7'],
+      'memberKeys': ['kepuh/R7'],
+      'homeLabels': {'kepuh/R9': 'B2/10 · Kepuh Persada'},
+      'homeRelations': {'kepuh/R7': 'penyewa'},
+    });
+    expect(homes.map((h) => h.key), ['griya/R1', 'kepuh/R9', 'kepuh/R7']);
+    expect(homes[0].isHead, isTrue);
+    expect(homes[1].label, 'B2/10 · Kepuh Persada');
+    expect(homes[2].isHead, isFalse);
+    expect(homes[2].relation, MemberRelation.penyewa);
+
+    // Akun lama tanpa homeKeys: hanya rumah utama.
+    final legacy = HomeRef.fromProfile(
+        {'estateId': 'griya', 'residentId': 'R2', 'householdRole': 'anggota'});
+    expect(legacy.single.isHead, isFalse);
+  });
 }

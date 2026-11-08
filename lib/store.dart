@@ -179,10 +179,24 @@ class EstateStore extends ChangeNotifier {
       if (role == Role.pengelola)
         ...((d['estateIds'] as List<dynamic>?) ?? const []).whereType<String>(),
     }.toList();
+    // Warga: bisa punya beberapa rumah (di satu/beberapa perumahan).
+    final homeList =
+        role == Role.warga ? HomeRef.fromProfile(d) : const <HomeRef>[];
+    if (homeList.isNotEmpty) {
+      ids
+        ..clear()
+        ..addAll({for (final h in homeList) h.estateId});
+    }
     if (ids.isEmpty) {
       throw StateError('Akun ini belum terhubung ke perumahan mana pun.');
     }
-    _estateId = ids.first;
+    final active = homeList.where((h) => h.key == _activeHomeKey).firstOrNull ??
+        homeList.firstOrNull;
+    _activeHomeKey = active?.key;
+    homes
+      ..clear()
+      ..addAll(homeList);
+    _estateId = active?.estateId ?? ids.first;
     final relation = d['relation'] as String?;
     final prefs = (d['notifPrefs'] as Map<String, dynamic>?) ?? const {};
     notifyAnnouncements = prefs['announcements'] != false;
@@ -196,6 +210,7 @@ class EstateStore extends ChangeNotifier {
       isPrimary: d['householdRole'] != 'anggota',
       relation: relation == null ? null : MemberRelation.values.byName(relation),
     );
+    if (active != null) currentUser = currentUser!.forHome(active);
     estates
       ..clear()
       ..addAll(ids.map((id) => EstateInfo(id: id, name: 'Perumahan')));
@@ -755,6 +770,81 @@ class EstateStore extends ChangeNotifier {
       currentUser = AppUser(
           name: r.name, role: Role.warga, residentId: r.id, email: r.email);
     }
+    _demoHomes();
+    notifyListeners();
+  }
+
+  /// Mode demo: rumah lain milik akun yang sama dicari dari data warga di
+  /// semua perumahan contoh (email atau No. HP sama).
+  void _demoHomes() {
+    homes.clear();
+    final user = currentUser;
+    if (user == null || user.role != Role.warga || user.residentId == null) {
+      _activeHomeKey = null;
+      return;
+    }
+    final me = currentResident;
+    bool same(Resident r) =>
+        r.id == me?.id ||
+        (me != null &&
+            ((me.email ?? '').isNotEmpty && r.email == me.email ||
+                me.phone.isNotEmpty && r.phone == me.phone));
+    for (final e in estates) {
+      final list = e.id == _estateId
+          ? residents
+          : _demoEstates[e.id]?.residents ?? const <Resident>[];
+      for (final r in list) {
+        if (user.isPrimary && same(r) || r.id == user.residentId && e.id == _estateId) {
+          homes.add(HomeRef(
+            estateId: e.id,
+            residentId: r.id,
+            label: '${r.houseNo} · ${e.name}',
+            isHead: user.isPrimary,
+            relation: user.relation,
+          ));
+        }
+      }
+    }
+    _activeHomeKey = '$_estateId/${user.residentId}';
+  }
+
+  /// Rumah-rumah milik akun warga ini (minimal satu).
+  final List<HomeRef> homes = [];
+  String? _activeHomeKey;
+
+  HomeRef? get activeHome =>
+      homes.where((h) => h.key == _activeHomeKey).firstOrNull;
+
+  /// Label rumah untuk ditampilkan, mis. "A1/05 · Griya Asri".
+  String homeLabel(HomeRef h) {
+    if (h.label.isNotEmpty) return h.label;
+    final house = h.key == _activeHomeKey ? currentResident?.houseNo : null;
+    final estate = estateNameOf(h.estateId);
+    return house == null ? estate : '$house · $estate';
+  }
+
+  /// Warga dengan beberapa rumah: pindah rumah aktif. Tagihan, keluhan,
+  /// tamu, renovasi, dan pembayaran mengikuti rumah yang dipilih.
+  Future<void> switchHome(String key) async {
+    final h = homes.where((x) => x.key == key).firstOrNull;
+    final user = currentUser;
+    if (h == null || user == null || isAdmin) {
+      throw StateError('Rumah tidak ditemukan.');
+    }
+    if (key == _activeHomeKey) return;
+    if (!isFirebase) {
+      if (h.estateId != _estateId) await switchEstate(h.estateId);
+      _activeHomeKey = key;
+      currentUser = user.forHome(h);
+      notifyListeners();
+      return;
+    }
+    _activeHomeKey = key;
+    _estateId = h.estateId;
+    currentUser = user.forHome(h);
+    _clearData();
+    estateName = estateNameOf(h.estateId);
+    _listen();
     notifyListeners();
   }
 
@@ -776,6 +866,8 @@ class EstateStore extends ChangeNotifier {
 
   Future<void> logout() async {
     currentUser = null;
+    homes.clear();
+    _activeHomeKey = null;
     myRegistration = null;
     _demoRegistrantId = null;
     _demoStaffId = null;
@@ -2608,6 +2700,7 @@ class EstateStore extends ChangeNotifier {
     }
     final res = await _fn!.httpsCallable('createPayment').call<Map<String, dynamic>>({
       'estateId': _estateId,
+      'residentId': rid,
       'billIds': billIds,
     });
     final id = res.data['paymentId'] as String;
@@ -3120,6 +3213,22 @@ class EstateStore extends ChangeNotifier {
         number: n.toString().padLeft(2, '0'),
       ));
     }
+    // Budi Santoso juga punya rumah di Amani Residence (satu akun, dua unit).
+    final budiHere = Resident(
+      id: 'R-AM1',
+      name: 'Budi Santoso',
+      houseNo: 'M1/08',
+      houseId: d.houses.last.id,
+      phone: '0812-3456-7890',
+    );
+    d.residents.add(budiHere);
+    final now = DateTime.now();
+    d.bills.add(Bill(
+      id: _newId('B'),
+      residentId: budiHere.id,
+      period: DateTime(now.year, now.month),
+      amount: d.fee,
+    ));
     // Pak Hendra juga pemilik Amani Residence.
     d.staff.add(StaffMember(
         id: 'S-HENDRA',
