@@ -2,7 +2,8 @@ name: Flutter CI
 
 on:
   push:
-    branches: [main]
+    # main + branch kerja Claude (agar kode diuji sebelum PR dibuat).
+    branches: [main, 'claude/**']
   pull_request:
 
 concurrency:
