@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models.dart';
 import '../store.dart';
+import '../widgets.dart';
 import 'announcements_screen.dart';
 import 'household_screen.dart';
 import 'master_data_screen.dart';
@@ -49,6 +50,21 @@ class AccountScreen extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 24),
+          if (store.isAdmin)
+            ListTile(
+              leading: const Icon(Icons.location_city_outlined),
+              title: Text(estateName),
+              subtitle: Text(store.estates.length > 1
+                  ? 'Perumahan aktif · ketuk untuk ganti '
+                      '(${store.estates.length} perumahan)'
+                  : 'Perumahan aktif'),
+              trailing: store.estates.length > 1
+                  ? const Icon(Icons.swap_horiz)
+                  : null,
+              onTap: store.estates.length > 1
+                  ? () => pickActiveEstate(context)
+                  : null,
+            ),
           if (resident != null)
             ListTile(
               leading: const Icon(Icons.phone_outlined),

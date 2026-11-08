@@ -228,3 +228,57 @@ Future<void> resetResidentPasswordFlow(
     ),
   );
 }
+
+/// Pengelola: pilih perumahan aktif dari perumahan yang boleh dikelola akun
+/// ini (`estateIds`). Semua menu (warga, tagihan, renovasi, dst.) mengikuti
+/// perumahan yang dipilih.
+Future<void> pickActiveEstate(BuildContext context) async {
+  final pending = {
+    for (final (e, n) in store.pendingInOtherEstates) e.id: n,
+  };
+  final id = await showModalBottomSheet<String>(
+    context: context,
+    showDragHandle: true,
+    isScrollControlled: true,
+    builder: (ctx) => SafeArea(
+      child: ConstrainedBox(
+        constraints:
+            BoxConstraints(maxHeight: MediaQuery.of(ctx).size.height * 0.7),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
+              child: Text('Pilih perumahan',
+                  style: Theme.of(ctx).textTheme.titleMedium),
+            ),
+            Flexible(
+              child: ListView(
+                shrinkWrap: true,
+                children: [
+                  for (final e in store.estates)
+                    ListTile(
+                      leading: Icon(e.id == store.activeEstateId
+                          ? Icons.radio_button_checked
+                          : Icons.radio_button_unchecked),
+                      title: Text(e.name),
+                      subtitle: pending[e.id] != null
+                          ? Text('${pending[e.id]} pendaftaran menunggu')
+                          : null,
+                      onTap: () => Navigator.pop(ctx, e.id),
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    ),
+  );
+  if (id == null || id == store.activeEstateId || !context.mounted) return;
+  final name = store.estateNameOf(id);
+  await runAction(context, store.switchEstate(id),
+      success: 'Sekarang mengelola $name');
+}
