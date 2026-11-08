@@ -102,18 +102,142 @@ void showSnack(BuildContext context, String message) {
     ..showSnackBar(SnackBar(content: Text(message)));
 }
 
-/// Menjalankan aksi async: tampilkan [success] bila berhasil, atau pesan error
-/// bila gagal. Mengembalikan hasil aksi, atau `null` bila gagal.
+/// Menjalankan aksi async: selama berjalan tampil indikator "Memproses…"
+/// (layar dikunci agar tidak tertekan dua kali), lalu data dimuat ulang
+/// ([EstateStore.refresh]) dan [success] ditampilkan; bila gagal, pesan error.
+/// Mengembalikan hasil aksi, atau `null` bila gagal.
 Future<T?> runAction<T>(BuildContext context, Future<T> action,
-    {String? success}) async {
+    {String? success, bool refresh = true}) async {
   try {
-    final result = await action;
+    final result = await withProgress(context, action, refresh: refresh);
     if (success != null && context.mounted) showSnack(context, success);
     return result;
   } catch (e) {
     if (context.mounted) showSnack(context, 'Gagal: ${describeError(e)}');
     return null;
   }
+}
+
+/// Seperti [runAction] tetapi error diteruskan ke pemanggil: tampilkan
+/// "Memproses…" selama [action] berjalan, lalu muat ulang data.
+Future<T> withProgress<T>(BuildContext context, Future<T> action,
+    {bool refresh = true}) async {
+  OverlayEntry? progress;
+  final overlay =
+      context.mounted ? Overlay.maybeOf(context, rootOverlay: true) : null;
+  if (overlay != null) {
+    progress = OverlayEntry(builder: (_) => const _ProgressBarrier());
+    overlay.insert(progress);
+  }
+  try {
+    final result = await action;
+    if (refresh) await store.refresh();
+    return result;
+  } finally {
+    progress?.remove();
+  }
+}
+
+class _ProgressBarrier extends StatelessWidget {
+  const _ProgressBarrier();
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      children: [
+        const ModalBarrier(dismissible: false, color: Colors.black26),
+        Center(
+          child: Card(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const SizedBox(
+                      width: 22,
+                      height: 22,
+                      child: CircularProgressIndicator(strokeWidth: 2.5)),
+                  const SizedBox(width: 16),
+                  Text('Memproses…',
+                      style: Theme.of(context).textTheme.titleSmall),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Konfirmasi ulang sebelum membuat/menyimpan data: menampilkan ringkasan
+/// isian agar pengguna memeriksa semuanya sudah benar. true = lanjut.
+Future<bool> confirmSave(
+  BuildContext context, {
+  required String title,
+  Map<String, String> details = const {},
+  String? note,
+  String action = 'Ya, simpan',
+}) async {
+  final rows = {
+    for (final e in details.entries)
+      if (e.value.trim().isNotEmpty) e.key: e.value.trim(),
+  };
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (ctx) {
+      final theme = Theme.of(ctx);
+      return AlertDialog(
+        icon: const Icon(Icons.fact_check_outlined),
+        title: Text(title),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text('Periksa kembali, apakah semua sudah benar?',
+                  style: theme.textTheme.bodyMedium),
+              if (rows.isNotEmpty) const SizedBox(height: 12),
+              for (final e in rows.entries)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      SizedBox(
+                        width: 110,
+                        child: Text(e.key,
+                            style: theme.textTheme.bodySmall
+                                ?.copyWith(color: theme.colorScheme.outline)),
+                      ),
+                      Expanded(
+                        child: Text(e.value,
+                            maxLines: 6,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.bodyMedium
+                                ?.copyWith(fontWeight: FontWeight.w600)),
+                      ),
+                    ],
+                  ),
+                ),
+              if (note != null) ...[
+                const SizedBox(height: 12),
+                Text(note, style: theme.textTheme.bodySmall),
+              ],
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Periksa lagi')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true), child: Text(action)),
+        ],
+      );
+    },
+  );
+  return ok == true;
 }
 
 /// Pengelola: pemberitahuan pendaftaran warga yang menunggu di perumahan

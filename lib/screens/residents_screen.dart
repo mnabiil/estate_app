@@ -189,14 +189,32 @@ class _ResidentsScreenState extends State<ResidentsScreen> {
 
     if (ok != true || !mounted) return;
     final n = name.text.trim();
+    final house = store.houseById(houseId!);
+    final confirmed = await confirmSave(context,
+        title: 'Tambah warga?',
+        details: {
+          'Nama': n,
+          'Perumahan': estateName,
+          'Rumah': house == null ? '' : store.houseLabel(house),
+          'No. HP': phone.text,
+          if (store.isFirebase) 'Email': email.text,
+        },
+        note: store.isFirebase
+            ? 'Akun login dibuat dengan password sementara (atau ditautkan '
+                'bila email sudah punya akun warga).'
+            : null);
+    if (!confirmed || !mounted) return;
     String? tempPassword;
     var failed = false;
     try {
-      tempPassword = await store.addResident(
-        n,
-        houseId!,
-        phone.text.trim(),
-        email: store.isFirebase ? email.text.trim() : null,
+      tempPassword = await withProgress(
+        context,
+        store.addResident(
+          n,
+          houseId!,
+          phone.text.trim(),
+          email: store.isFirebase ? email.text.trim() : null,
+        ),
       );
     } catch (e) {
       failed = true;

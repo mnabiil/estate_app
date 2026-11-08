@@ -19,15 +19,28 @@ class HouseholdScreen extends StatelessWidget {
       builder: (_) => const _AddMemberDialog(),
     );
     if (input == null || !context.mounted) return;
+    final confirmed = await confirmSave(context,
+        title: 'Tambah anggota rumah?',
+        details: {
+          'Nama': input.name,
+          'Hubungan': input.relation.label,
+          'No. HP': input.phone,
+          'Email': input.email,
+          'Rumah': store.residentById(residentId)?.houseNo ?? '',
+        });
+    if (!confirmed || !context.mounted) return;
     String? tempPassword;
     var failed = false;
     try {
-      tempPassword = await store.addMember(
-        residentId: residentId,
-        name: input.name,
-        relation: input.relation,
-        phone: input.phone,
-        email: input.email,
+      tempPassword = await withProgress(
+        context,
+        store.addMember(
+          residentId: residentId,
+          name: input.name,
+          relation: input.relation,
+          phone: input.phone,
+          email: input.email,
+        ),
       );
     } catch (e) {
       failed = true;

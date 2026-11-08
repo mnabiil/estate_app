@@ -64,6 +64,17 @@ Future<Payment?> startPaymentFlow(BuildContext context, {String? upToBillId}) as
         bills: unpaid, initialCount: start <= 0 ? unpaid.length : start),
   );
   if (selected == null || selected.isEmpty || !context.mounted) return null;
+  final chosen = unpaid.where((b) => selected.contains(b.id)).toList();
+  final ok = await confirmSave(context,
+      title: 'Bayar ${chosen.length} tagihan?',
+      details: {
+        'Tagihan': chosen.map((b) => formatMonth(b.period)).join(', '),
+        'Jumlah': formatRupiah(chosen.fold(0, (t, b) => t + b.amount)),
+      },
+      note: 'Kode unik 3 digit akan ditambahkan ke total. Transfer dalam '
+          '24 jam setelah kode dibuat.',
+      action: 'Ya, buat kode bayar');
+  if (!ok || !context.mounted) return null;
   final p = await runAction(context, store.createPayment(selected));
   if (p == null || !context.mounted) return null;
   await Navigator.of(context).push(
@@ -171,6 +182,17 @@ class PaymentDetailScreen extends StatelessWidget {
   Future<void> _upload(BuildContext context, Payment p) async {
     final photo = await pickPhoto(context);
     if (photo == null || !context.mounted) return;
+    final ok = await confirmSave(context,
+        title: 'Kirim bukti transfer?',
+        details: {
+          'Total transfer': formatRupiah(p.total),
+          'Berita': p.reference,
+          'Tagihan': p.periods.map(periodLabel).join(', '),
+        },
+        note: 'Pastikan nominal di bukti sama persis, termasuk 3 digit kode '
+            'unik.',
+        action: 'Ya, kirim');
+    if (!ok || !context.mounted) return;
     await runAction(context, store.submitPaymentProof(p.id, photo),
         success: 'Bukti terkirim. Menunggu verifikasi pengelola.');
   }
@@ -595,6 +617,20 @@ class BankAccountsScreen extends StatelessWidget {
     );
     if (result == null || !context.mounted) return;
     final (account, estates) = result;
+    final confirmed = await confirmSave(context,
+        title: index == null ? 'Tambah rekening?' : 'Simpan perubahan rekening?',
+        details: {
+          'Nama rekening': account.title,
+          'Bank': account.bankName,
+          'No. rekening': account.accountNumber,
+          'Atas nama': account.accountName,
+          if (index == null)
+            'Perumahan':
+                [for (final id in estates) store.estateNameOf(id)].join(', '),
+        },
+        note: 'Pastikan nomor rekening benar: warga akan mentransfer ke '
+            'rekening ini.');
+    if (!confirmed || !context.mounted) return;
     if (index == null) {
       await runAction(context, store.addBankAccount(account, estates.toList()),
           success: estates.length > 1

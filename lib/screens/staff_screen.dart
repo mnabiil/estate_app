@@ -61,16 +61,35 @@ class _TeamTab extends StatelessWidget {
       builder: (_) => const _AddStaffDialog(),
     );
     if (input == null || !context.mounted) return;
+    final confirmed = await confirmSave(context,
+        title: 'Tambah anggota tim?',
+        details: {
+          'Nama': input.name,
+          'Email': input.email,
+          'No. HP': input.phone,
+          'Level': input.roleId == null
+              ? 'Pemilik (akses penuh)'
+              : store.adminRoleById(input.roleId)?.name ?? '',
+          if (store.estates.length > 1)
+            'Perumahan': input.allEstates
+                ? 'Semua perumahan'
+                : [for (final id in input.estateIds) store.estateNameOf(id)]
+                    .join(', '),
+        });
+    if (!confirmed || !context.mounted) return;
     String? tempPassword;
     var failed = false;
     try {
-      tempPassword = await store.addStaff(
-        name: input.name,
-        email: input.email,
-        phone: input.phone,
-        roleId: input.roleId,
-        estateIds: input.estateIds.toList(),
-        allEstates: input.allEstates,
+      tempPassword = await withProgress(
+        context,
+        store.addStaff(
+          name: input.name,
+          email: input.email,
+          phone: input.phone,
+          roleId: input.roleId,
+          estateIds: input.estateIds.toList(),
+          allEstates: input.allEstates,
+        ),
       );
     } catch (e) {
       failed = true;
@@ -528,6 +547,21 @@ class _RolesTab extends StatelessWidget {
       builder: (_) => _RoleDialog(role: role),
     );
     if (result == null || !context.mounted) return;
+    final confirmed = await confirmSave(context,
+        title: role == null ? 'Buat level akses?' : 'Simpan perubahan level?',
+        details: {
+          'Nama level': result.$1,
+          'Hak akses': result.$2.isEmpty
+              ? 'Tanpa hak ubah'
+              : [
+                  for (final p in AdminPermission.values)
+                    if (result.$2.contains(p)) p.label
+                ].join(', '),
+        },
+        note: role != null
+            ? 'Hak semua anggota dengan level ini ikut berubah.'
+            : null);
+    if (!confirmed || !context.mounted) return;
     await runAction(
       context,
       store.saveAdminRole(result.$1, result.$2, id: role?.id),
@@ -623,9 +657,15 @@ class _RolesTab extends StatelessWidget {
                     ActionChip(
                       avatar: const Icon(Icons.add, size: 18),
                       label: Text(name),
-                      onPressed: () => runAction(
-                          context, store.saveAdminRole(name, perms),
-                          success: 'Level $name dibuat'),
+                      onPressed: () async {
+                        final ok = await confirmSave(context,
+                            title: 'Buat level "$name"?',
+                            details: {'Hak akses': _permSummary(perms)});
+                        if (!ok || !context.mounted) return;
+                        await runAction(
+                            context, store.saveAdminRole(name, perms),
+                            success: 'Level $name dibuat');
+                      },
                     ),
                 ],
               ),

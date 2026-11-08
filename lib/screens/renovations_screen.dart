@@ -161,11 +161,14 @@ class _RenovationsScreenState extends State<RenovationsScreen> {
                             : 'Belum ada ijin renovasi.\n'
                                 'Ajukan sebelum memulai pekerjaan renovasi.',
                       )
-                    : ListView.builder(
-                        padding: const EdgeInsets.fromLTRB(16, 4, 16, 96),
-                        itemCount: list.length,
-                        itemBuilder: (context, i) =>
-                            _RenovationCard(list[i], showResident: isAdmin),
+                    : RefreshIndicator(
+                        onRefresh: store.refresh,
+                        child: ListView.builder(
+                          padding: const EdgeInsets.fromLTRB(16, 4, 16, 96),
+                          itemCount: list.length,
+                          itemBuilder: (context, i) =>
+                              _RenovationCard(list[i], showResident: isAdmin),
+                        ),
                       ),
               ),
             ],
@@ -339,6 +342,21 @@ class _RenovationFormScreenState extends State<RenovationFormScreen> {
       }
       return;
     }
+    final confirmed = await confirmSave(context,
+        title: 'Ajukan ijin renovasi?',
+        details: {
+          'Jenis': _type.label,
+          'Detail': _desc.text,
+          'Kontraktor': _contractor.text,
+          'No. HP': _phone.text,
+          'Jangka waktu':
+              '${formatDate(_range!.start)} – ${formatDate(_range!.end)}',
+          'Deposit': formatRupiah(store.depositFor(_type)),
+          'Lampiran': _files.isEmpty ? 'Tidak ada' : '${_files.length} file',
+        },
+        note: 'Deposit dibayar setelah pengajuan disetujui pengelola.',
+        action: 'Ya, ajukan');
+    if (!confirmed || !mounted) return;
     setState(() => _saving = true);
     final ok = await runAction(
       context,
@@ -776,6 +794,15 @@ class RenovationDetailScreen extends StatelessWidget {
     );
     if (result == null || !context.mounted) return;
     final (method, proof) = result;
+    final ok = await confirmSave(context,
+        title: 'Kirim pembayaran deposit?',
+        details: {
+          'Deposit': formatRupiah(r.deposit),
+          'Metode': method,
+          'Bukti': proof == null ? 'Tanpa foto' : 'Foto terlampir',
+        },
+        action: 'Ya, kirim');
+    if (!ok || !context.mounted) return;
     await runAction(
       context,
       store.payDeposit(r.id, method: method, proof: proof),
@@ -789,6 +816,18 @@ class RenovationDetailScreen extends StatelessWidget {
       builder: (_) => const _LogDialog(),
     );
     if (result == null || !context.mounted) return;
+    final ok = await confirmSave(context,
+        title: 'Catat barang ${result.direction.label.toLowerCase()}?',
+        details: {
+          'Barang': result.item,
+          'Jumlah': result.quantity,
+          'Catatan': result.note,
+          'Foto': result.photos.isEmpty
+              ? 'Tanpa foto'
+              : '${result.photos.length} foto',
+        },
+        action: 'Ya, catat');
+    if (!ok || !context.mounted) return;
     await runAction(
       context,
       store.addRenovationLog(

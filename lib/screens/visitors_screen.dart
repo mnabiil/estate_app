@@ -153,6 +153,15 @@ class _VisitorFormScreenState extends State<VisitorFormScreen> {
 
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
+    final ok = await confirmSave(context,
+        title: 'Daftarkan tamu?',
+        details: {
+          'Nama tamu': _name.text,
+          'Keperluan': _purpose.text,
+          'Tanggal': formatDate(_date),
+        },
+        action: 'Ya, daftarkan');
+    if (!ok || !mounted) return;
     setState(() => _saving = true);
     final v = await runAction(
       context,

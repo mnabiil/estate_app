@@ -386,6 +386,20 @@ class EstateStore extends ChangeNotifier {
     }, onError: _onStreamError));
   }
 
+  /// Muat ulang data perumahan/rumah aktif (setelah menyimpan atau tarik
+  /// layar ke bawah). Mode Firebase: listener dipasang ulang sehingga data
+  /// diambil lagi dari server; mode demo: tampilan diperbarui.
+  Future<void> refresh() async {
+    final user = currentUser;
+    if (isFirebase &&
+        user != null &&
+        user.role != Role.pendaftar &&
+        _estateId != null) {
+      _listen();
+    }
+    notifyListeners();
+  }
+
   void _onStreamError(Object e) {
     debugPrint('Firestore stream error: $e');
     _reportProblem('Gagal memuat data: $e');

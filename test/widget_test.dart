@@ -32,6 +32,11 @@ void main() {
     expect(find.text('Pilih tagihan yang dibayar'), findsOneWidget);
     await tester.tap(find.text('Buat kode bayar'));
     await tester.pumpAndSettle();
+    // Konfirmasi ulang sebelum kode dibuat.
+    expect(find.text('Periksa kembali, apakah semua sudah benar?'),
+        findsOneWidget);
+    await tester.tap(find.text('Ya, buat kode bayar'));
+    await tester.pumpAndSettle();
 
     final p = store.activePaymentOf('R1')!;
     expect(p.total, before + p.uniqueCode);
