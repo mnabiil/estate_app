@@ -352,9 +352,19 @@ class EstateStore extends ChangeNotifier {
     T Function(String id, Map<String, dynamic> data) parse,
   ) {
     _subs.add(query.snapshots().listen((snap) {
+      // Satu dokumen rusak/tidak lengkap (mis. diubah manual di Console)
+      // tidak boleh menyembunyikan dokumen lain: lewati & catat saja.
+      final items = <T>[];
+      for (final d in snap.docs) {
+        try {
+          items.add(parse(d.id, d.data()));
+        } catch (e) {
+          debugPrint('Dokumen ${d.reference.path} dilewati: $e');
+        }
+      }
       target
         ..clear()
-        ..addAll(snap.docs.map((d) => parse(d.id, d.data())));
+        ..addAll(items);
       notifyListeners();
     }, onError: _onStreamError));
   }
