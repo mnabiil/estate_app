@@ -274,6 +274,22 @@ class EstateStore extends ChangeNotifier {
       _bind(_est.collection('registrations'), registrations,
           Registration.fromMap);
       _bind(_est.collection('residents'), residents, Resident.fromMap);
+      // Pendaftaran yang menunggu di perumahan lain yang juga dikelola,
+      // agar tidak terlewat saat pengelola sedang membuka perumahan lain.
+      _pendingByEstate.clear();
+      for (final e in estates) {
+        if (e.id == _estateId) continue;
+        _subs.add(_db!
+            .collection('estates')
+            .doc(e.id)
+            .collection('registrations')
+            .where('status', isEqualTo: RegistrationStatus.menunggu.name)
+            .snapshots()
+            .listen((snap) {
+          _pendingByEstate[e.id] = snap.size;
+          notifyListeners();
+        }, onError: _onStreamError));
+      }
     } else {
       _subs.add(_est.collection('residents').doc(rid).snapshots().listen((s) {
         residents
@@ -343,6 +359,7 @@ class EstateStore extends ChangeNotifier {
     renovations.clear();
     renovationLogs.clear();
     registrations.clear();
+    _pendingByEstate.clear();
     members.clear();
     bills.clear();
     complaints.clear();
@@ -1311,6 +1328,26 @@ class EstateStore extends ChangeNotifier {
           r.status == RegistrationStatus.menunggu && canReviewRegistration(r))
       .toList()
     ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+
+  /// Mode Firebase: jumlah pendaftaran menunggu per perumahan lain.
+  final Map<String, int> _pendingByEstate = {};
+
+  /// Pengelola: pendaftaran menunggu di perumahan lain yang dikelola
+  /// (selain perumahan aktif), sebagai (perumahan, jumlah).
+  List<(EstateInfo, int)> get pendingInOtherEstates {
+    if (!isAdmin) return const [];
+    final result = <(EstateInfo, int)>[];
+    for (final e in estates) {
+      if (e.id == _estateId) continue;
+      final n = isFirebase
+          ? (_pendingByEstate[e.id] ?? 0)
+          : (_demoEstates[e.id]?.registrations ?? const <Registration>[])
+              .where((r) => r.status == RegistrationStatus.menunggu)
+              .length;
+      if (n > 0) result.add((e, n));
+    }
+    return result;
+  }
 
   /// Permintaan gabung ke rumah tertentu yang masih menunggu.
   List<Registration> joinRequestsFor(String residentId) => registrations

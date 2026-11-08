@@ -4,6 +4,7 @@ import '../models.dart';
 import '../store.dart';
 import '../theme.dart';
 import '../utils.dart';
+import '../widgets.dart';
 import 'announcements_screen.dart';
 import 'master_data_screen.dart';
 import 'renovations_screen.dart';
@@ -154,6 +155,8 @@ class DashboardScreen extends StatelessWidget {
                       ?.copyWith(color: scheme.onSurfaceVariant),
                 ),
                 const SizedBox(height: 24),
+                const OtherEstatePendingBanner(
+                    margin: EdgeInsets.only(bottom: 16)),
                 _HeroCard(stat: hero, isAdmin: store.isAdmin),
                 const SizedBox(height: 28),
                 Text('Ringkasan',

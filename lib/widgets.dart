@@ -116,6 +116,57 @@ Future<T?> runAction<T>(BuildContext context, Future<T> action,
   }
 }
 
+/// Pengelola: pemberitahuan pendaftaran warga yang menunggu di perumahan
+/// lain yang dikelola, dengan tombol untuk pindah ke perumahan itu.
+class OtherEstatePendingBanner extends StatelessWidget {
+  const OtherEstatePendingBanner({
+    super.key,
+    this.onSwitched,
+    this.margin = const EdgeInsets.fromLTRB(16, 0, 16, 8),
+  });
+
+  /// Dipanggil setelah berpindah perumahan (mis. untuk membuka daftar
+  /// pendaftaran).
+  final VoidCallback? onSwitched;
+  final EdgeInsetsGeometry margin;
+
+  @override
+  Widget build(BuildContext context) {
+    final items = store.pendingInOtherEstates;
+    if (items.isEmpty) return const SizedBox.shrink();
+    final scheme = Theme.of(context).colorScheme;
+    return Column(
+      children: [
+        for (final (estate, count) in items)
+          Card(
+            margin: margin,
+            color: scheme.tertiaryContainer,
+            child: ListTile(
+              leading: Icon(Icons.how_to_reg_outlined,
+                  color: scheme.onTertiaryContainer),
+              title: Text(
+                '$count pendaftaran menunggu di ${estate.name}',
+                style: TextStyle(color: scheme.onTertiaryContainer),
+              ),
+              subtitle: Text('Ketuk untuk pindah ke perumahan ini',
+                  style: TextStyle(color: scheme.onTertiaryContainer)),
+              trailing: Icon(Icons.swap_horiz,
+                  color: scheme.onTertiaryContainer),
+              onTap: () async {
+                final ok = await runAction(
+                  context,
+                  store.switchEstate(estate.id).then((_) => true),
+                  success: 'Pindah ke ${estate.name}',
+                );
+                if (ok == true) onSwitched?.call();
+              },
+            ),
+          ),
+      ],
+    );
+  }
+}
+
 /// Pengelola: konfirmasi lalu reset password akun warga [name] (kepala
 /// keluarga [residentId], atau anggota rumah [memberUid]) dan tampilkan
 /// password sementara yang baru.

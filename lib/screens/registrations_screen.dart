@@ -42,6 +42,7 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
                 selected: _history,
                 onChanged: (v) => setState(() => _history = v ?? false),
               ),
+              const OtherEstatePendingBanner(),
               if (!store.registrationOpen)
                 Card(
                   margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),

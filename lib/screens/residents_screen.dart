@@ -364,6 +364,7 @@ class _ResidentsScreenState extends State<ResidentsScreen> {
                   onChanged: (v) => setState(() => _query = v),
                 ),
               ),
+              const OtherEstatePendingBanner(),
               if (store.pendingRegistrations.isNotEmpty)
                 Card(
                   margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),

@@ -12,6 +12,25 @@ void main() {
     return s.housesOf(b.id).firstWhere((h) => h.number == number);
   }
 
+  test('pengelola diberi tahu pendaftaran menunggu di perumahan lain',
+      () async {
+    s.login(Role.pengelola);
+    final pending = s.pendingRegistrations.length;
+    expect(pending, greaterThan(0));
+    expect(s.pendingInOtherEstates, isEmpty);
+
+    // Pindah ke perumahan baru: pendaftaran Griya Asri tetap terlihat.
+    await s.createEstate(name: 'Kepuh Persada', address: '', fee: 250000);
+    expect(s.pendingRegistrations, isEmpty);
+    final other = s.pendingInOtherEstates.single;
+    expect(other.$1.id, 'griya-asri');
+    expect(other.$2, pending);
+
+    await s.switchEstate('griya-asri');
+    expect(s.pendingInOtherEstates, isEmpty);
+    expect(s.pendingRegistrations.length, pending);
+  });
+
   Future<void> register({
     required String name,
     required String email,
