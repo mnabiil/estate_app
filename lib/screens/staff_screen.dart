@@ -503,6 +503,7 @@ class _AddStaffDialogState extends State<_AddStaffDialog> {
 /// Contoh level siap pakai untuk mempercepat pengaturan.
 const _templates = <(String, Set<AdminPermission>)>[
   ('Bendahara', {AdminPermission.billing}),
+  ('Admin Keuangan', {AdminPermission.billing, AdminPermission.bankAccounts}),
   (
     'Admin Warga',
     {

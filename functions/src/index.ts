@@ -141,6 +141,7 @@ type Permission =
   | "masterData"
   | "residents"
   | "billing"
+  | "bankAccounts"
   | "complaints"
   | "visitors"
   | "announcements"

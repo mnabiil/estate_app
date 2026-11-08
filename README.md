@@ -67,7 +67,7 @@ penghuni tidak ditampilkan ke pendaftar.
 
 Akun → **Tim pengelola** (hanya **pemilik**). Tab *Level akses* berisi level yang bisa dibuat
 sendiri (template: Bendahara, Admin Warga, Satpam, Koordinator Bangunan) dengan hak:
-master data, warga & pendaftaran, tagihan & pembayaran, keluhan, tamu, pengumuman, ijin
+master data, warga & pendaftaran, tagihan & pembayaran, rekening pembayaran, keluhan, tamu, pengumuman, ijin
 renovasi, catat barang renovasi. Tab *Tim* untuk menambah pengelola (email; akun baru dibuat
 dengan password sementara oleh `addStaff`), mengganti level, atau mengeluarkan (`removeStaff`).
 Pemilik punya semua hak; minimal harus ada satu pemilik.
@@ -98,7 +98,8 @@ Profil: rumah utama tetap `estateId`/`residentId`; rumah lain di `homeKeys`
 
 ## Pembayaran IPL (transfer + kode unik)
 
-Pembayaran **hanya transfer** ke rekening perumahan (Tagihan → ikon bank, hak *tagihan*;
+Pembayaran **hanya transfer** ke rekening perumahan (Tagihan → ikon bank, hak *rekening
+pembayaran* — terpisah dari hak *tagihan*;
 maks. 5 rekening per perumahan).
 
 1. Warga menekan **Bayar** dan memilih tagihan. **Beberapa tagihan bisa dibayar sekaligus**

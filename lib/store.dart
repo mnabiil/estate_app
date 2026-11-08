@@ -2653,9 +2653,9 @@ class EstateStore extends ChangeNotifier {
     if (a.title.length > 60) throw StateError('Nama rekening maksimal 60 karakter.');
   }
 
-  /// Pengelola (hak tagihan): atur rekening tujuan transfer perumahan.
+  /// Pengelola (hak rekening pembayaran): atur rekening tujuan transfer.
   Future<void> saveBankAccounts(List<BankAccount> accounts) async {
-    _require(AdminPermission.billing);
+    _require(AdminPermission.bankAccounts);
     if (accounts.length > 5) throw StateError('Maksimal 5 rekening.');
     accounts.forEach(_validateBankAccount);
     if (!isFirebase) {
@@ -3095,7 +3095,7 @@ class EstateStore extends ChangeNotifier {
 
   /// Tambah rekening ke satu atau beberapa perumahan sekaligus.
   Future<void> addBankAccount(BankAccount account, List<String> estateIds) async {
-    _require(AdminPermission.billing);
+    _require(AdminPermission.bankAccounts);
     _validateBankAccount(account);
     final targets = [
       for (final e in estates) if (estateIds.contains(e.id)) e.id

@@ -48,12 +48,13 @@ class _BillsScreenState extends State<BillsScreen> {
           appBar: AppBar(
             title: Text(isAdmin ? 'Tagihan IPL' : 'Tagihan Saya'),
             actions: [
-              if (isAdmin && store.can(AdminPermission.billing)) ...[
+              if (isAdmin && store.can(AdminPermission.bankAccounts))
                 IconButton(
                   tooltip: 'Rekening pembayaran',
                   icon: const Icon(Icons.account_balance_outlined),
                   onPressed: () => _open(const BankAccountsScreen()),
                 ),
+              if (isAdmin && store.can(AdminPermission.billing)) ...[
                 IconButton(
                   tooltip: 'Buat tagihan bulan ini',
                   icon: const Icon(Icons.post_add),
@@ -93,7 +94,7 @@ class _BillsScreenState extends State<BillsScreen> {
                     onTap: () => _open(const PaymentsScreen()),
                   ),
                 )
-              else if (store.can(AdminPermission.billing) &&
+              else if (store.can(AdminPermission.bankAccounts) &&
                   store.bankAccounts.isEmpty)
                 Card(
                   margin: const EdgeInsets.fromLTRB(16, 16, 16, 0),
