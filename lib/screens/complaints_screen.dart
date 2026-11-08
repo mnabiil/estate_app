@@ -66,9 +66,17 @@ class _ComplaintsScreenState extends State<ComplaintsScreen> {
                       ChoiceChip(
                         label: Text(s.label),
                         selected: c.status == s,
-                        onSelected: (_) {
+                        onSelected: (_) async {
                           Navigator.pop(ctx);
-                          runAction(
+                          final ok = await confirmSave(context,
+                              title: 'Ubah status keluhan?',
+                              details: {
+                                'Keluhan': c.title,
+                                'Status lama': c.status.label,
+                                'Status baru': s.label,
+                              });
+                          if (!ok || !context.mounted) return;
+                          await runAction(
                             context,
                             store.updateComplaintStatus(c.id, s),
                             success: 'Status keluhan: ${s.label}',
@@ -204,22 +212,34 @@ class _ComplaintFormScreenState extends State<ComplaintFormScreen> {
 
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
+    final ok = await confirmSave(context,
+        title: 'Kirim keluhan?',
+        details: {
+          'Judul': _title.text,
+          'Kategori': _category,
+          'Detail': _desc.text,
+          'Foto': _photos.isEmpty ? 'Tanpa foto' : '${_photos.length} foto',
+        },
+        action: 'Ya, kirim');
+    if (!ok || !mounted) return;
     setState(() => _saving = true);
-    final messenger = ScaffoldMessenger.of(context);
-    try {
-      await store.addComplaint(
-        _title.text.trim(),
-        _desc.text.trim(),
-        _category,
-        photos: _photos,
-      );
-      messenger.showSnackBar(
-          const SnackBar(content: Text('Keluhan terkirim ke pengelola')));
-      if (mounted) Navigator.pop(context);
-    } catch (e) {
-      messenger
-          .showSnackBar(SnackBar(content: Text('Gagal: ${describeError(e)}')));
-      if (mounted) setState(() => _saving = false);
+    final done = await runAction(
+      context,
+      store
+          .addComplaint(
+            _title.text.trim(),
+            _desc.text.trim(),
+            _category,
+            photos: _photos,
+          )
+          .then((_) => true),
+      success: 'Keluhan terkirim ke pengelola',
+    );
+    if (!mounted) return;
+    if (done == true) {
+      Navigator.pop(context);
+    } else {
+      setState(() => _saving = false);
     }
   }
 

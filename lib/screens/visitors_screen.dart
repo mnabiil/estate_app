@@ -95,11 +95,23 @@ class VisitorsScreen extends StatelessWidget {
                                 Colors.green.shade600)
                             : store.can(AdminPermission.visitors)
                                 ? FilledButton.tonal(
-                                    onPressed: () => runAction(
-                                      context,
-                                      store.checkInVisitor(v.id),
-                                      success: '${v.name} sudah masuk',
-                                    ),
+                                    onPressed: () async {
+                                      final ok = await confirmSave(context,
+                                          title: 'Check-in tamu?',
+                                          details: {
+                                            'Tamu': v.name,
+                                            'Keperluan': v.purpose,
+                                            'Tujuan':
+                                                '${host?.name ?? ''} (${host?.houseNo ?? ''})',
+                                          },
+                                          action: 'Ya, check-in');
+                                      if (!ok || !context.mounted) return;
+                                      await runAction(
+                                        context,
+                                        store.checkInVisitor(v.id),
+                                        success: '${v.name} sudah masuk',
+                                      );
+                                    },
                                     child: const Text('Check-in'),
                                   )
                                 : StatusChip('Menunggu', Colors.blue.shade600),
@@ -153,6 +165,15 @@ class _VisitorFormScreenState extends State<VisitorFormScreen> {
 
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
+    final ok = await confirmSave(context,
+        title: 'Daftarkan tamu?',
+        details: {
+          'Nama tamu': _name.text,
+          'Keperluan': _purpose.text,
+          'Tanggal': formatDate(_date),
+        },
+        action: 'Ya, daftarkan');
+    if (!ok || !mounted) return;
     setState(() => _saving = true);
     final v = await runAction(
       context,

@@ -84,6 +84,20 @@ class _ImportScreenState extends State<ImportScreen> {
 
   Future<void> _apply() async {
     final plan = _plan!;
+    final confirmed = await confirmSave(context,
+        title: 'Simpan hasil import?',
+        details: {
+          'Perumahan': estateName,
+          'Cluster baru': '${plan.clusters.length}',
+          'Tipe baru': '${plan.types.length}',
+          'Blok baru': '${plan.blocks.length}',
+          'Rumah baru': '${plan.houses.length}',
+          'Warga baru': '${plan.residents.length}',
+        },
+        note: 'Data yang sudah ada dilewati. Proses tidak bisa dibatalkan '
+            'setelah berjalan.',
+        action: 'Ya, import');
+    if (!confirmed || !mounted) return;
     setState(() {
       _busy = true;
       _progress = 'Menyimpan…';

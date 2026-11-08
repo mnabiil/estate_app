@@ -25,6 +25,10 @@ class MasterDataScreen extends StatelessWidget {
       maxLength: 60,
     );
     if (name == null || !context.mounted) return;
+    final ok = await confirmSave(context,
+        title: c == null ? 'Tambah cluster?' : 'Simpan nama cluster?',
+        details: {'Perumahan': estateName, 'Nama cluster': name});
+    if (!ok || !context.mounted) return;
     await runAction(context, store.saveCluster(name, id: c?.id),
         success: c == null ? 'Cluster $name ditambahkan' : 'Nama disimpan');
   }
@@ -268,6 +272,19 @@ class ClusterScreen extends StatelessWidget {
     );
     if (ok != true || !context.mounted) return;
     final n = name.text.trim();
+    final typeFeeValue = int.tryParse(typeFee.text.replaceAll('.', '').trim());
+    final confirmed = await confirmSave(context,
+        title: t == null ? 'Tambah tipe rumah?' : 'Simpan tipe rumah?',
+        details: {
+          'Cluster': store.clusterById(clusterId)?.name ?? '',
+          'Nama tipe': n,
+          'Luas bangunan': lb.text.trim().isEmpty ? '' : '${lb.text.trim()} m²',
+          'Luas tanah': lt.text.trim().isEmpty ? '' : '${lt.text.trim()} m²',
+          'Tarif IPL': typeFeeValue == null
+              ? 'Ikut tarif perumahan'
+              : formatRupiah(typeFeeValue),
+        });
+    if (!confirmed || !context.mounted) return;
     await runAction(
       context,
       store.saveHouseType(
@@ -298,6 +315,18 @@ class ClusterScreen extends StatelessWidget {
     );
     if (result == null || !context.mounted) return;
     final (name, chosenType) = result;
+    final ok = await confirmSave(context,
+        title: block == null ? 'Tambah blok?' : 'Simpan blok?',
+        details: {
+          'Cluster': store.clusterById(clusterId)?.name ?? '',
+          'Nama blok': name,
+          'Tipe rumah': store.typesOf(clusterId)
+                  .where((t) => t.id == chosenType)
+                  .firstOrNull
+                  ?.name ??
+              '',
+        });
+    if (!ok || !context.mounted) return;
     await runAction(
       context,
       store.saveBlock(clusterId, name, id: block?.id, typeId: chosenType),
@@ -450,6 +479,16 @@ class BlockScreen extends StatelessWidget {
       builder: (_) => const _AddHousesDialog(),
     );
     if (numbers == null || numbers.isEmpty || !context.mounted) return;
+    final ok = await confirmSave(context,
+        title: 'Tambah ${numbers.length} nomor rumah?',
+        details: {
+          'Blok': store.blockById(blockId)?.name ?? '',
+          'Nomor': numbers.length <= 12
+              ? numbers.join(', ')
+              : '${numbers.first} … ${numbers.last}',
+        },
+        note: 'Nomor yang sudah ada dilewati.');
+    if (!ok || !context.mounted) return;
     final added = await runAction(context, store.addHouses(blockId, numbers));
     if (added == null || !context.mounted) return;
     final skipped = numbers.length - added;
@@ -492,9 +531,14 @@ class BlockScreen extends StatelessWidget {
                   style: OutlinedButton.styleFrom(
                     foregroundColor: Theme.of(ctx).colorScheme.error,
                   ),
-                  onPressed: () {
+                  onPressed: () async {
                     Navigator.pop(ctx);
-                    runAction(context, store.deleteHouse(h.id),
+                    final ok = await confirmSave(context,
+                        title: 'Hapus nomor rumah?',
+                        details: {'Rumah': store.houseLabel(h)},
+                        action: 'Ya, hapus');
+                    if (!ok || !context.mounted) return;
+                    await runAction(context, store.deleteHouse(h.id),
                         success: 'Rumah ${store.houseLabel(h)} dihapus');
                   },
                   icon: const Icon(Icons.delete_outline),
@@ -771,6 +815,19 @@ Future<void> editEstate(BuildContext context, {bool create = false}) async {
   final due = int.parse(dueDay.text.trim());
   final ds = int.parse(depSmall.text.replaceAll('.', ''));
   final dl = int.parse(depLarge.text.replaceAll('.', ''));
+  final confirmed = await confirmSave(context,
+      title: create ? 'Tambah perumahan?' : 'Simpan profil perumahan?',
+      details: {
+        'Nama': n,
+        'Alamat': a,
+        'Tarif IPL': formatRupiah(f),
+        'Jatuh tempo': 'Tanggal $due',
+        'Deposit kecil': formatRupiah(ds),
+        'Deposit besar': formatRupiah(dl),
+        if (!create)
+          'Pendaftaran': regOpen.value ? 'Dibuka' : 'Ditutup',
+      });
+  if (!confirmed || !context.mounted) return;
   await runAction(
     context,
     create

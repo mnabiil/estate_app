@@ -84,16 +84,7 @@ class DashboardScreen extends StatelessWidget {
                 // Header: avatar, nama perumahan, tombol pengumuman.
                 Row(
                   children: [
-                    CircleAvatar(
-                      radius: 24,
-                      backgroundColor: scheme.primary,
-                      foregroundColor: scheme.onPrimary,
-                      child: Text(
-                        user.name.isEmpty ? '?' : user.name[0].toUpperCase(),
-                        style: const TextStyle(
-                            fontWeight: FontWeight.w700, fontSize: 18),
-                      ),
-                    ),
+                    const UserAvatar(radius: 24),
                     const SizedBox(width: 12),
                     Expanded(
                       child: Material(

@@ -70,7 +70,7 @@ service cloud.firestore {
         && (!exists(staffPath(estateId)) || get(staffPath(estateId)).data.isOwner == true);
     }
 
-    // Hak: masterData, residents, billing, complaints, visitors,
+    // Hak: masterData, residents, billing, bankAccounts, complaints, visitors,
     // announcements, renovations, renovationLogs.
     function can(estateId, perm) {
       return isOwner(estateId)
@@ -101,7 +101,12 @@ service cloud.firestore {
           // Preferensi notifikasi push.
           || (onlyChanges(['notifPrefs'])
             && request.resource.data.notifPrefs is map
-            && request.resource.data.notifPrefs.keys().hasOnly(['announcements', 'bills'])));
+            && request.resource.data.notifPrefs.keys().hasOnly(['announcements', 'bills']))
+          // Foto profil sendiri (URL Storage), atau dihapus.
+          || (onlyChanges(['photoUrl'])
+            && (!('photoUrl' in request.resource.data)
+              || (request.resource.data.photoUrl is string
+                && request.resource.data.photoUrl.size() <= 2000))));
       allow create, delete: if false;
     }
 
@@ -123,8 +128,8 @@ service cloud.firestore {
       allow read: if inEstate(estateId);
       // Master perumahan: nama, alamat, tarif IPL, jatuh tempo, deposit
       // renovasi, pendaftaran mandiri (hak masterData). Rekening pembayaran:
-      // hak billing.
-      allow update: if (can(estateId, 'billing')
+      // hak bankAccounts (terpisah dari hak tagihan).
+      allow update: if (can(estateId, 'bankAccounts')
           && onlyChanges(['bankAccounts'])
           && request.resource.data.bankAccounts is list
           && request.resource.data.bankAccounts.size() <= 5)
@@ -166,8 +171,8 @@ service cloud.firestore {
           && validName(40)
           && request.resource.data.permissions is list
           && request.resource.data.permissions.hasOnly(['masterData', 'residents',
-            'billing', 'complaints', 'visitors', 'announcements', 'renovations',
-            'renovationLogs']);
+            'billing', 'bankAccounts', 'complaints', 'visitors', 'announcements',
+            'renovations', 'renovationLogs']);
         allow delete: if isOwner(estateId);
       }
 

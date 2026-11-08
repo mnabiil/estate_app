@@ -116,10 +116,29 @@ void main() {
     expect(p.canUploadProofOn(later), isFalse);
   });
 
-  test('rekening hanya diatur pengelola dengan hak tagihan', () async {
+  test('rekening diatur pengelola dengan hak rekening (terpisah dari tagihan)',
+      () async {
     s.login(Role.pengelola, staffId: 'S-JOKO');
     expect(s.saveBankAccounts(const []), throwsStateError);
+    // Bendahara: boleh buat tagihan & verifikasi, tapi tidak mengatur rekening.
     s.login(Role.pengelola, staffId: 'S-SARI');
+    expect(s.can(AdminPermission.billing), isTrue);
+    expect(s.can(AdminPermission.bankAccounts), isFalse);
+    expect(s.saveBankAccounts(const []), throwsStateError);
+    expect(
+        s.addBankAccount(
+            const BankAccount(
+                bankName: 'BRI', accountNumber: '1234567', accountName: 'X'),
+            ['griya-asri']),
+        throwsStateError);
+
+    // Level dengan hak rekening saja: bisa atur rekening, tidak bisa tagihan.
+    s.login(Role.pengelola, staffId: 'S-HENDRA');
+    await s.saveAdminRole('Admin Rekening', {AdminPermission.bankAccounts});
+    final role = s.adminRoles.firstWhere((r) => r.name == 'Admin Rekening');
+    await s.setStaffRole('S-JOKO', role.id);
+    s.login(Role.pengelola, staffId: 'S-JOKO');
+    expect(s.generateBillsForCurrentMonth(), throwsStateError);
     await s.saveBankAccounts(const [
       BankAccount(bankName: 'BRI', accountNumber: '0123-01-000123-30-1', accountName: 'Paguyuban'),
     ]);

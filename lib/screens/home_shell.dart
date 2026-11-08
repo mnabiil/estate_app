@@ -77,14 +77,18 @@ class _HomeShellState extends State<HomeShell> {
     ];
 
     return Scaffold(
-      body: IndexedStack(
-        index: _index,
-        // Hanya tab aktif yang ikut animasi Hero (FAB tiap tab berbagi tag
-        // default sehingga bentrok saat membuka halaman baru).
-        children: [
-          for (var i = 0; i < tabs.length; i++)
-            HeroMode(enabled: i == _index, child: tabs[i].page),
-        ],
+      // Tarik layar ke bawah untuk memuat ulang data (semua tab).
+      body: RefreshIndicator(
+        onRefresh: store.refresh,
+        child: IndexedStack(
+          index: _index,
+          // Hanya tab aktif yang ikut animasi Hero (FAB tiap tab berbagi tag
+          // default sehingga bentrok saat membuka halaman baru).
+          children: [
+            for (var i = 0; i < tabs.length; i++)
+              HeroMode(enabled: i == _index, child: tabs[i].page),
+          ],
+        ),
       ),
       bottomNavigationBar: DecoratedBox(
         decoration: BoxDecoration(

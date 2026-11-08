@@ -308,6 +308,26 @@ class _RegisterScreenState extends State<RegisterScreen> {
       showSnack(context, 'Centang pernyataan kebenaran data terlebih dahulu.');
       return;
     }
+    final o = _options;
+    final house = o?.houses.where((h) => h.id == _houseId).firstOrNull;
+    final block = house == null
+        ? null
+        : o!.blocks.where((b) => b.id == house.blockId).firstOrNull;
+    final confirmed = await confirmSave(context,
+        title: _isJoin ? 'Ajukan gabung ke rumah ini?' : 'Kirim pendaftaran?',
+        details: {
+          'Perumahan': _estate?.name ?? '',
+          'Rumah': house == null ? '' : '${block?.name ?? '?'}/${house.number}',
+          'Nama': _name.text,
+          'No. HP': _phone.text,
+          'Status hunian': _occupancy.label,
+          if (_isJoin && _relation != null) 'Hubungan': _relation!.label,
+          if (!widget.resubmit) 'Email': _email.text,
+          'Dokumen': _document == null ? 'Tidak dilampirkan' : 'Terlampir',
+        },
+        note: 'Data akan diverifikasi pengelola sebelum akun bisa dipakai.',
+        action: 'Ya, kirim');
+    if (!confirmed || !mounted) return;
     setState(() => _busy = true);
     try {
       await store.registerResident(

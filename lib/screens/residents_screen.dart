@@ -97,6 +97,14 @@ class _ResidentsScreenState extends State<ResidentsScreen> {
     if (picked == null || !mounted) return;
     if (linked && picked == r.houseId) return;
     final h = store.houseById(picked)!;
+    final ok = await confirmSave(context,
+        title: linked ? 'Pindahkan rumah warga?' : 'Atur rumah warga?',
+        details: {
+          'Warga': r.name,
+          if (r.houseNo.isNotEmpty) 'Rumah lama': r.houseNo,
+          'Rumah baru': store.houseLabel(h),
+        });
+    if (!ok || !mounted) return;
     await runAction(
       context,
       store.assignHouse(r.id, picked),
@@ -105,6 +113,15 @@ class _ResidentsScreenState extends State<ResidentsScreen> {
   }
 
   Future<void> _autoLink() async {
+    final ok = await confirmSave(context,
+        title: 'Hubungkan otomatis?',
+        details: {
+          'Warga belum terhubung': '${store.unlinkedResidents.length} warga',
+        },
+        note: 'Nomor rumah lama dicocokkan dengan master rumah. Hanya rumah '
+            'kosong yang dipakai; sisanya diatur manual.',
+        action: 'Ya, hubungkan');
+    if (!ok || !mounted) return;
     final result = await runAction(context, store.autoLinkResidents());
     if (result == null || !mounted) return;
     final (linked, remaining) = result;
@@ -189,14 +206,32 @@ class _ResidentsScreenState extends State<ResidentsScreen> {
 
     if (ok != true || !mounted) return;
     final n = name.text.trim();
+    final house = store.houseById(houseId!);
+    final confirmed = await confirmSave(context,
+        title: 'Tambah warga?',
+        details: {
+          'Nama': n,
+          'Perumahan': estateName,
+          'Rumah': house == null ? '' : store.houseLabel(house),
+          'No. HP': phone.text,
+          if (store.isFirebase) 'Email': email.text,
+        },
+        note: store.isFirebase
+            ? 'Akun login dibuat dengan password sementara (atau ditautkan '
+                'bila email sudah punya akun warga).'
+            : null);
+    if (!confirmed || !mounted) return;
     String? tempPassword;
     var failed = false;
     try {
-      tempPassword = await store.addResident(
-        n,
-        houseId!,
-        phone.text.trim(),
-        email: store.isFirebase ? email.text.trim() : null,
+      tempPassword = await withProgress(
+        context,
+        store.addResident(
+          n,
+          houseId!,
+          phone.text.trim(),
+          email: store.isFirebase ? email.text.trim() : null,
+        ),
       );
     } catch (e) {
       failed = true;

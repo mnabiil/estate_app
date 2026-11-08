@@ -32,11 +32,14 @@ class AnnouncementsScreen extends StatelessWidget {
               ? const EmptyState(
                   icon: Icons.campaign_outlined,
                   message: 'Belum ada pengumuman')
-              : ListView.builder(
-                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 88),
-                  itemCount: list.length,
-                  itemBuilder: (context, i) => AnnouncementCard(
-                      list[i], featured: i == 0),
+              : RefreshIndicator(
+                  onRefresh: store.refresh,
+                  child: ListView.builder(
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 88),
+                    itemCount: list.length,
+                    itemBuilder: (context, i) =>
+                        AnnouncementCard(list[i], featured: i == 0),
+                  ),
                 ),
         );
       },
@@ -291,6 +294,21 @@ class _AnnouncementFormScreenState extends State<AnnouncementFormScreen> {
       showSnack(context, 'Pilih minimal satu perumahan');
       return;
     }
+    final confirmed = await confirmSave(context,
+        title: 'Kirim pengumuman?',
+        details: {
+          'Judul': _title.text,
+          'Isi': _body.text,
+          'Foto': _photo == null ? 'Tanpa foto' : 'Ada foto sampul',
+          'Berlaku': _until == null
+              ? 'Tanpa batas waktu'
+              : 'Sampai ${formatDate(_until!)}',
+          'Perumahan':
+              [for (final id in _targets) store.estateNameOf(id)].join(', '),
+        },
+        note: 'Notifikasi dikirim ke semua warga di perumahan terpilih.',
+        action: 'Ya, kirim');
+    if (!confirmed || !mounted) return;
     setState(() => _saving = true);
     final ok = await runAction(
       context,
