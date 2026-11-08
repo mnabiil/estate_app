@@ -77,6 +77,16 @@ Level akses disalin ke tiap perumahan. Pengelola memilih perumahan aktif di **Ak
 `firestore.rules` (`can(estateId, perm)`) dan Cloud Functions. Pengelola lama yang belum tercatat
 di `staff` dianggap pemilik.
 
+## Lupa password
+
+Layar login → isi email → **Lupa password**: Firebase mengirim link reset. Link dibuka di halaman
+sendiri (`hosting/auth-action.html`, Firebase Hosting) yang meminta **password baru 2x** (harus
+sama, min. 8 karakter berisi huruf & angka) dengan indikator kekuatan.
+
+Sekali saja setelah deploy hosting: Firebase Console → Authentication → **Templates** → Password
+reset → ✏️ → *Customize action URL* →
+`https://estate-management-app-98b57.web.app/auth-action` → Save.
+
 ## Foto profil
 
 Akun → ketuk avatar → **Ganti foto profil** (kamera/galeri, dengan pratinjau & konfirmasi) atau
@@ -211,7 +221,7 @@ Aplikasi otomatis memilih mode:
 4. Deploy aturan keamanan & functions:
    ```bash
    cd functions && npm install && cd ..
-   firebase deploy --only firestore:rules,storage,functions
+   firebase deploy --only hosting,firestore:rules,storage,functions
    ```
 5. **Buat pengelola pertama** (sekali saja, lewat Console):
    - Authentication → Add user → email & password pengelola. Salin **User UID**-nya.

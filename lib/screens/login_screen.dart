@@ -307,7 +307,8 @@ class _EmailLoginFormState extends State<_EmailLoginForm> {
     await runAction(
       context,
       store.sendPasswordReset(email),
-      success: 'Link reset password dikirim ke $email',
+      success: 'Link reset password dikirim ke $email. Buka link itu, lalu '
+          'isi password baru 2x.',
     );
   }
 

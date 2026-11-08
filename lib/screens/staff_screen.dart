@@ -12,21 +12,38 @@ class StaffScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return DefaultTabController(
-      length: 2,
-      child: ListenableBuilder(
-        listenable: store,
-        builder: (context, _) => Scaffold(
-          appBar: AppBar(
-            title: const Text('Tim Pengelola'),
-            bottom: const TabBar(tabs: [
-              Tab(text: 'Tim'),
-              Tab(text: 'Level akses'),
-            ]),
+    return ListenableBuilder(
+      listenable: store,
+      builder: (context, _) {
+        final title = Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Tim Pengelola'),
+            Text(estateName, style: Theme.of(context).textTheme.bodySmall),
+          ],
+        );
+        // Selain pemilik: hanya daftar tim perumahan yang sedang dipilih,
+        // tanpa tab level akses.
+        if (!store.isOwner) {
+          return Scaffold(
+            appBar: AppBar(title: title),
+            body: const _TeamTab(),
+          );
+        }
+        return DefaultTabController(
+          length: 2,
+          child: Scaffold(
+            appBar: AppBar(
+              title: title,
+              bottom: const TabBar(tabs: [
+                Tab(text: 'Tim'),
+                Tab(text: 'Level akses'),
+              ]),
+            ),
+            body: const TabBarView(children: [_TeamTab(), _RolesTab()]),
           ),
-          body: const TabBarView(children: [_TeamTab(), _RolesTab()]),
-        ),
-      ),
+        );
+      },
     );
   }
 }
@@ -42,7 +59,8 @@ class _OwnerOnlyNote extends StatelessWidget {
       child: ListTile(
         leading: const Icon(Icons.lock_outline),
         title: Text('Level Anda: ${store.myStaff?.levelLabel ?? '-'}'),
-        subtitle: const Text('Hanya pemilik yang bisa mengubah tim & level akses.'),
+        subtitle: Text('Tim pengelola $estateName. Hanya pemilik yang bisa '
+            'mengubah tim.'),
       ),
     );
   }
@@ -348,11 +366,12 @@ class _TeamTab extends StatelessWidget {
                 title: Text(m.id == store.myStaff?.id ? '${m.name} (Anda)' : m.name),
                 subtitle: Text([
                   m.levelLabel,
-                  if (!m.isOwner) _permSummary(m.permissions),
-                  if (store.estates.length > 1) store.staffEstatesLabel(m),
+                  if (owner && !m.isOwner) _permSummary(m.permissions),
+                  if (owner && store.estates.length > 1)
+                    store.staffEstatesLabel(m),
                   if (m.email.isNotEmpty) m.email,
                 ].join(' · ')),
-                isThreeLine: !m.isOwner,
+                isThreeLine: owner && !m.isOwner,
                 trailing: owner && m.id != store.myStaff?.id
                     ? PopupMenuButton<String>(
                         onSelected: (v) => switch (v) {
