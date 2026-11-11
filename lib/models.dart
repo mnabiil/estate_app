@@ -394,7 +394,11 @@ class Complaint {
     required this.createdAt,
     this.status = ComplaintStatus.baru,
     this.photos = const [],
-  });
+    List<ComplaintUpdate>? updates,
+  }) : updates = updates ?? [];
+
+  /// Riwayat penanganan oleh pengelola (status + catatan + foto).
+  final List<ComplaintUpdate> updates;
 
   final String id;
   final String residentId;
@@ -420,6 +424,46 @@ class Complaint {
         photos: (m['photoUrls'] as List<dynamic>? ?? const [])
             .whereType<String>()
             .toList(),
+        updates: [
+          for (final u in (m['updates'] as List<dynamic>? ?? const []))
+            if (u is Map) ComplaintUpdate.fromMap(u.cast<String, dynamic>()),
+        ],
+      );
+}
+
+/// Satu langkah penanganan keluhan: status, catatan, dan foto (maks. 3).
+class ComplaintUpdate {
+  const ComplaintUpdate({
+    required this.status,
+    required this.at,
+    this.note = '',
+    this.photos = const [],
+    this.by = '',
+  });
+
+  final ComplaintStatus status;
+  final DateTime at;
+  final String note;
+  final List<String> photos;
+  final String by;
+
+  Map<String, dynamic> toMap() => {
+        'status': status.name,
+        'note': note,
+        'photoUrls': photos,
+        'by': by,
+        'at': _ts(at),
+      };
+
+  factory ComplaintUpdate.fromMap(Map<String, dynamic> m) => ComplaintUpdate(
+        status: ComplaintStatus.values.asNameMap()[m['status']] ??
+            ComplaintStatus.diproses,
+        at: _date(m['at']) ?? DateTime.now(),
+        note: m['note'] as String? ?? '',
+        photos: (m['photoUrls'] as List<dynamic>? ?? const [])
+            .whereType<String>()
+            .toList(),
+        by: m['by'] as String? ?? '',
       );
 }
 

@@ -1,4 +1,5 @@
 import 'package:estate_app/main.dart';
+import 'package:estate_app/models.dart';
 import 'package:estate_app/store.dart';
 import 'package:estate_app/utils.dart';
 import 'package:flutter/material.dart';
@@ -45,4 +46,34 @@ void main() {
     // Belum lunas sebelum diverifikasi pengelola.
     expect(store.unpaidTotal('R1'), before);
   });
+
+  testWidgets('tarik ke bawah untuk refresh & tab ikut berubah', (tester) async {
+    await store.logout();
+    store.login(Role.warga, residentId: 'R2');
+    await tester.pumpWidget(const EstateApp());
+    await tester.pumpAndSettle();
+
+    // Tab Keluhan: daftar pendek/kosong tetap bisa ditarik untuk refresh.
+    await tester.tap(find.text('Keluhan'));
+    await tester.pumpAndSettle();
+    await tester.fling(
+        find.byType(Scrollable).last, const Offset(0, 400), 1000);
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+    expect(find.byType(RefreshProgressIndicator), findsOneWidget);
+    await tester.pumpAndSettle();
+    expect(find.byType(RefreshProgressIndicator), findsNothing);
+
+    // Fitur keluhan dimatikan: tab Keluhan langsung hilang tanpa login ulang.
+    store.complaintsEnabled = false;
+    await store.refresh();
+    await tester.pumpAndSettle();
+    expect(find.widgetWithText(NavigationDestination, 'Keluhan'), findsNothing);
+    expect(find.widgetWithText(NavigationDestination, 'Tamu'), findsOneWidget);
+    store.complaintsEnabled = true;
+    await store.refresh();
+    await tester.pumpAndSettle();
+    expect(find.widgetWithText(NavigationDestination, 'Keluhan'), findsOneWidget);
+  });
 }
+

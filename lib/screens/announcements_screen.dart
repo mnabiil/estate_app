@@ -28,19 +28,20 @@ class AnnouncementsScreen extends StatelessWidget {
                   label: const Text('Buat pengumuman'),
                 )
               : null,
-          body: list.isEmpty
-              ? const EmptyState(
-                  icon: Icons.campaign_outlined,
-                  message: 'Belum ada pengumuman')
-              : RefreshIndicator(
-                  onRefresh: store.refresh,
-                  child: ListView.builder(
+          body: RefreshIndicator(
+            onRefresh: store.refresh,
+            child: list.isEmpty
+                ? const EmptyState(
+                    scrollable: true,
+                    icon: Icons.campaign_outlined,
+                    message: 'Belum ada pengumuman')
+                : ListView.builder(
                     padding: const EdgeInsets.fromLTRB(16, 8, 16, 88),
                     itemCount: list.length,
                     itemBuilder: (context, i) =>
                         AnnouncementCard(list[i], featured: i == 0),
                   ),
-                ),
+          ),
         );
       },
     );

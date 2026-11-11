@@ -87,6 +87,17 @@ Sekali saja setelah deploy hosting: Firebase Console → Authentication → **Te
 reset → ✏️ → *Customize action URL* →
 `https://estate-management-app-98b57.web.app/auth-action` → Save.
 
+## Keluhan
+
+Warga membuat keluhan (maks. 3 foto). Pengelola (hak keluhan) membuka detail → **Perbarui status**:
+pilih status (boleh tetap untuk catatan progres), isi **catatan** dan **foto** (maks. 3). Semua
+tercatat di **riwayat penanganan** yang juga dilihat warga pelapor (`complaints/{id}.updates`,
+foto di `estates/{e}/complaints/{residentId}/{id}/status/`).
+
+Fitur keluhan bisa **dinonaktifkan** per perumahan (tab Keluhan → saklar di atas; hak keluhan
+atau master data). Saat nonaktif, tab Keluhan hilang dari aplikasi warga dan pembuatan keluhan
+ditolak juga oleh `firestore.rules` (`estates/{e}.complaintsEnabled`).
+
 ## Foto profil
 
 Akun → ketuk avatar → **Ganti foto profil** (kamera/galeri, dengan pratinjau & konfirmasi) atau

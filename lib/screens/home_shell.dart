@@ -30,6 +30,15 @@ class _HomeShellState extends State<HomeShell> {
 
   void _goTo(int i) => setState(() => _index = i);
 
+  /// Pindah tab berdasarkan namanya (urutan tab bisa berubah, mis. tab
+  /// Keluhan disembunyikan dari warga saat fiturnya dinonaktifkan).
+  void _goToTab(String label) {
+    final i = _tabs.indexWhere((t) => t.label == label);
+    if (i >= 0) _goTo(i);
+  }
+
+  List<_Tab> _tabs = const [];
+
   @override
   void initState() {
     super.initState();
@@ -59,15 +68,20 @@ class _HomeShellState extends State<HomeShell> {
     }
   }
 
+  // Ikut diperbarui setiap data di store berubah.
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => ListenableBuilder(
+      listenable: store, builder: (context, _) => _build(context));
+
+  Widget _build(BuildContext context) {
     final tabs = <_Tab>[
       _Tab('Beranda', Icons.home_outlined, Icons.home,
-          DashboardScreen(onNavigate: _goTo)),
+          DashboardScreen(onNavigate: _goToTab)),
       const _Tab('Tagihan', Icons.receipt_long_outlined, Icons.receipt_long,
           BillsScreen()),
-      const _Tab('Keluhan', Icons.report_problem_outlined, Icons.report_problem,
-          ComplaintsScreen()),
+      if (store.isAdmin || store.complaintsEnabled)
+        const _Tab('Keluhan', Icons.report_problem_outlined,
+            Icons.report_problem, ComplaintsScreen()),
       if (store.isAdmin)
         const _Tab(
             'Warga', Icons.people_outline, Icons.people, ResidentsScreen())
@@ -75,6 +89,8 @@ class _HomeShellState extends State<HomeShell> {
         const _Tab('Tamu', Icons.badge_outlined, Icons.badge, VisitorsScreen()),
       const _Tab('Akun', Icons.person_outline, Icons.person, AccountScreen()),
     ];
+    _tabs = tabs;
+    if (_index >= tabs.length) _index = tabs.length - 1;
 
     return Scaffold(
       // Tarik layar ke bawah untuk memuat ulang data (semua tab).

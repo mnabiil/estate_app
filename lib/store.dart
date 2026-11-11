@@ -79,6 +79,9 @@ class EstateStore extends ChangeNotifier {
   /// Perumahan menerima pendaftaran warga mandiri.
   bool registrationOpen = true;
 
+  /// Fitur keluhan untuk warga perumahan aktif (bisa dimatikan pengelola).
+  bool complaintsEnabled = true;
+
   /// Preferensi notifikasi push akun ini.
   bool notifyAnnouncements = true;
   bool notifyBills = true;
@@ -290,6 +293,7 @@ class EstateStore extends ChangeNotifier {
       estateName = d['name'] as String? ?? 'Perumahan';
       estateAddress = d['address'] as String? ?? '';
       registrationOpen = d['registrationOpen'] as bool? ?? true;
+      complaintsEnabled = d['complaintsEnabled'] as bool? ?? true;
       bankAccounts
         ..clear()
         ..addAll(BankAccount.listFrom(d['bankAccounts']));
@@ -392,13 +396,71 @@ class EstateStore extends ChangeNotifier {
   /// diambil lagi dari server; mode demo: tampilan diperbarui.
   Future<void> refresh() async {
     final user = currentUser;
-    if (isFirebase &&
-        user != null &&
-        user.role != Role.pendaftar &&
-        _estateId != null) {
-      _listen();
+    if (!isFirebase ||
+        user == null ||
+        user.role == Role.pendaftar ||
+        _estateId == null) {
+      notifyListeners();
+      return;
     }
+    // Profil dibaca ulang dari server: akses perumahan baru, rumah baru,
+    // foto profil, dll. ikut diperbarui tanpa login ulang.
+    final uid = _auth!.currentUser?.uid;
+    if (uid != null) {
+      try {
+        final snap = await _db!
+            .collection('users')
+            .doc(uid)
+            .get(const GetOptions(source: Source.server))
+            .timeout(const Duration(seconds: 10));
+        final d = snap.data();
+        if (d != null) _applyProfileRefresh(d);
+      } catch (e) {
+        debugPrint('Refresh profil gagal (offline?): $e');
+      }
+    }
+    _listen();
     notifyListeners();
+  }
+
+  void _applyProfileRefresh(Map<String, dynamic> d) {
+    profilePhotoUrl = d['photoUrl'] as String?;
+    final user = currentUser!;
+    Set<String> ids;
+    if (user.role == Role.pengelola) {
+      ids = {
+        if (d['estateId'] is String) d['estateId'] as String,
+        ...((d['estateIds'] as List<dynamic>?) ?? const []).whereType<String>(),
+      };
+    } else {
+      final hs = HomeRef.fromProfile(d);
+      if (hs.isEmpty) return;
+      homes
+        ..clear()
+        ..addAll(hs);
+      ids = {for (final h in hs) h.estateId};
+      final active = hs.where((h) => h.key == _activeHomeKey).firstOrNull ??
+          hs.first;
+      _activeHomeKey = active.key;
+      if (active.estateId != _estateId) {
+        _estateId = active.estateId;
+        _clearData();
+      }
+      currentUser = user.forHome(active);
+    }
+    if (ids.isEmpty) return;
+    for (final id in ids) {
+      if (!estates.any((e) => e.id == id)) {
+        estates.add(EstateInfo(id: id, name: 'Perumahan'));
+        _watchEstateName(id);
+      }
+    }
+    estates.removeWhere((e) => !ids.contains(e.id));
+    if (!ids.contains(_estateId)) {
+      _estateId = estates.first.id;
+      _clearData();
+    }
+    estateName = estateNameOf(_estateId!);
   }
 
   void _onStreamError(Object e) {
@@ -2956,6 +3018,9 @@ class EstateStore extends ChangeNotifier {
     List<XFile> photos = const [],
   }) async {
     final rid = currentUser!.residentId!;
+    if (!complaintsEnabled) {
+      throw StateError('Fitur keluhan sedang dinonaktifkan pengelola.');
+    }
     if (photos.length > maxComplaintPhotos) {
       throw ArgumentError('Maksimal $maxComplaintPhotos foto');
     }
@@ -3002,14 +3067,60 @@ class EstateStore extends ChangeNotifier {
     return ref.getDownloadURL();
   }
 
-  Future<void> updateComplaintStatus(String id, ComplaintStatus status) async {
+  /// Pengelola memperbarui penanganan keluhan: status (boleh tetap),
+  /// catatan, dan foto (maks. 3). Tercatat di riwayat keluhan.
+  Future<void> updateComplaintStatus(String id, ComplaintStatus status,
+      {String note = '', List<XFile> photos = const []}) async {
     _require(AdminPermission.complaints);
+    final c = complaints.firstWhere((c) => c.id == id);
+    note = note.trim();
+    if (status == c.status && note.isEmpty && photos.isEmpty) {
+      throw StateError('Ubah status atau isi catatan/foto.');
+    }
+    if (note.length > 1000) throw StateError('Catatan maksimal 1000 karakter.');
+    if (photos.length > maxComplaintPhotos) {
+      throw StateError('Maksimal $maxComplaintPhotos foto.');
+    }
+    final by = currentUser?.name ?? '';
     if (!isFirebase) {
-      complaints.firstWhere((c) => c.id == id).status = status;
+      c.status = status;
+      c.updates.add(ComplaintUpdate(
+        status: status,
+        at: DateTime.now(),
+        note: note,
+        photos: [for (final p in photos) p.path],
+        by: by,
+      ));
       notifyListeners();
       return;
     }
-    await _est.collection('complaints').doc(id).update({'status': status.name});
+    final stamp = DateTime.now().millisecondsSinceEpoch;
+    final urls = <String>[];
+    for (var i = 0; i < photos.length; i++) {
+      urls.add(await _uploadFile(
+          'estates/$_estateId/complaints/${c.residentId}/${c.id}/status/$stamp-$i.jpg',
+          photos[i],
+          contentType: 'image/jpeg'));
+    }
+    final update = ComplaintUpdate(
+        status: status, at: DateTime.now(), note: note, photos: urls, by: by);
+    await _est.collection('complaints').doc(id).update({
+      'status': status.name,
+      'updates': FieldValue.arrayUnion([update.toMap()]),
+    });
+  }
+
+  /// Pengelola menyalakan / mematikan fitur keluhan untuk warga.
+  Future<void> setComplaintsEnabled(bool enabled) async {
+    if (!can(AdminPermission.complaints) && !can(AdminPermission.masterData)) {
+      _require(AdminPermission.complaints);
+    }
+    if (!isFirebase) {
+      complaintsEnabled = enabled;
+      notifyListeners();
+      return;
+    }
+    await _est.update({'complaintsEnabled': enabled});
   }
 
   // ---------- Tamu ----------
@@ -3656,6 +3767,7 @@ class _DemoEstate {
         ..depositSmall = s.depositSmall
         ..depositLarge = s.depositLarge
         ..registrationOpen = s.registrationOpen
+        ..complaintsEnabled = s.complaintsEnabled
         ..billDueDay = s.billDueDay
         ..registrations.addAll(s.registrations)
         ..members.addAll(s.members)
@@ -3670,6 +3782,7 @@ class _DemoEstate {
   int depositSmall = defaultDepositSmall;
   int depositLarge = defaultDepositLarge;
   bool registrationOpen = true;
+  bool complaintsEnabled = true;
   int billDueDay = defaultBillDueDay;
   final registrations = <Registration>[];
   final members = <HouseholdMember>[];
@@ -3707,6 +3820,7 @@ class _DemoEstate {
     s.depositSmall = depositSmall;
     s.depositLarge = depositLarge;
     s.registrationOpen = registrationOpen;
+    s.complaintsEnabled = complaintsEnabled;
     s.billDueDay = billDueDay;
     s.registrations.addAll(registrations);
     s.members.addAll(members);

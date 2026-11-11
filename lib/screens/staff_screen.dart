@@ -316,8 +316,12 @@ class _TeamTab extends StatelessWidget {
         success: '${m.name} dikeluarkan dari tim');
   }
 
+  // Ikut diperbarui setiap data di store berubah.
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => ListenableBuilder(
+      listenable: store, builder: (context, _) => _build(context));
+
+  Widget _build(BuildContext context) {
     final theme = Theme.of(context);
     final owner = store.isOwner;
     final list = store.staff.toList()
@@ -627,8 +631,12 @@ class _RolesTab extends StatelessWidget {
     await runAction(context, store.deleteAdminRole(r.id), success: 'Dihapus');
   }
 
+  // Ikut diperbarui setiap data di store berubah.
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => ListenableBuilder(
+      listenable: store, builder: (context, _) => _build(context));
+
+  Widget _build(BuildContext context) {
     final theme = Theme.of(context);
     final owner = store.isOwner;
     final unusedTemplates = _templates

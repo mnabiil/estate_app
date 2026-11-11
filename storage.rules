@@ -88,6 +88,17 @@ service firebase.storage {
       allow update, delete: if false;
     }
 
+    // Foto penanganan keluhan (diunggah pengelola saat memperbarui status).
+    match /estates/{estateId}/complaints/{residentId}/{complaintId}/status/{fileName} {
+      allow read: if request.auth != null
+        && (adminOf(estateId) || myHome(estateId, residentId));
+      allow create: if request.auth != null
+        && adminOf(estateId)
+        && request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+      allow update, delete: if false;
+    }
+
     match /estates/{estateId}/complaints/{residentId}/{complaintId}/{fileName} {
       allow read: if request.auth != null
         && (adminOf(estateId)

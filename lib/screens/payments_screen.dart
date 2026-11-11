@@ -556,8 +556,11 @@ class _PaymentsScreenState extends State<PaymentsScreen> {
                 onChanged: (v) => setState(() => _filter = v),
               ),
               Expanded(
-                child: list.isEmpty
+                child: RefreshIndicator(
+                  onRefresh: store.refresh,
+                  child: list.isEmpty
                     ? const EmptyState(
+                        scrollable: true,
                         icon: Icons.payments_outlined,
                         message: 'Tidak ada pembayaran')
                     : ListView.separated(
@@ -595,6 +598,7 @@ class _PaymentsScreenState extends State<PaymentsScreen> {
                           );
                         },
                       ),
+                ),
               ),
             ],
           ),

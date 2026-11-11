@@ -70,6 +70,7 @@ class VisitorsScreen extends StatelessWidget {
                 ),
           body: list.isEmpty
               ? const EmptyState(
+                        scrollable: true,
                   icon: Icons.badge_outlined,
                   message: 'Belum ada tamu terdaftar')
               : ListView.builder(
