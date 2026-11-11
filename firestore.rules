@@ -133,6 +133,10 @@ service cloud.firestore {
           && onlyChanges(['bankAccounts'])
           && request.resource.data.bankAccounts is list
           && request.resource.data.bankAccounts.size() <= 5)
+        // Fitur keluhan warga dinyalakan / dimatikan.
+        || ((can(estateId, 'complaints') || can(estateId, 'masterData'))
+          && onlyChanges(['complaintsEnabled'])
+          && request.resource.data.complaintsEnabled is bool)
         // Nominal deposit renovasi: juga oleh pengelola berhak ijin renovasi.
         || (can(estateId, 'renovations')
           && onlyChanges(['renovationDepositSmall', 'renovationDepositLarge'])
@@ -305,16 +309,24 @@ service cloud.firestore {
       match /complaints/{complaintId} {
         allow read: if isAdmin(estateId) || ownsExisting(estateId);
         allow create: if ownsNew(estateId)
+          // Fitur keluhan bisa dimatikan pengelola per perumahan.
+          && get(/databases/$(database)/documents/estates/$(estateId)).data
+            .get('complaintsEnabled', true) == true
           && request.resource.data.status == 'baru'
+          && !('updates' in request.resource.data)
           && request.resource.data.title is string
           && request.resource.data.title.size() <= 120
           && request.resource.data.description.size() <= 2000
           && (!('photoUrls' in request.resource.data)
             || (request.resource.data.photoUrls is list
               && request.resource.data.photoUrls.size() <= 3));
+        // Penanganan: status + satu entri riwayat (catatan & foto) per update.
         allow update: if can(estateId, 'complaints')
-          && onlyChanges(['status'])
-          && request.resource.data.status in ['baru', 'diproses', 'selesai'];
+          && onlyChanges(['status', 'updates'])
+          && request.resource.data.status in ['baru', 'diproses', 'selesai']
+          && request.resource.data.updates is list
+          && request.resource.data.updates.size()
+            == resource.data.get('updates', []).size() + 1;
         allow delete: if false;
       }
 

@@ -10,15 +10,15 @@ import 'master_data_screen.dart';
 import 'renovations_screen.dart';
 import 'visitors_screen.dart';
 
-/// Indeks tab di HomeShell.
-const _tabBills = 1;
-const _tabComplaints = 2;
-const _tabFourth = 3; // Warga (pengelola) atau Tamu (warga)
+/// Nama tab di HomeShell (urutan tab bisa berubah).
+const _tabBills = 'Tagihan';
+const _tabComplaints = 'Keluhan';
+String get _tabFourth => store.isAdmin ? 'Warga' : 'Tamu';
 
 class DashboardScreen extends StatelessWidget {
   const DashboardScreen({super.key, required this.onNavigate});
 
-  final ValueChanged<int> onNavigate;
+  final ValueChanged<String> onNavigate;
 
   void _push(BuildContext context, Widget page) =>
       Navigator.of(context).push(MaterialPageRoute(builder: (_) => page));
@@ -58,11 +58,18 @@ class DashboardScreen extends StatelessWidget {
           stats = [
             _Stat(Icons.receipt_long, formatRupiah(store.unpaidTotal(rid)),
                 'Tagihan belum dibayar', () => onNavigate(_tabBills)),
-            _Stat(
-                Icons.report_problem,
-                '${store.complaints.where((c) => c.residentId == rid && c.status != ComplaintStatus.selesai).length}',
-                'Keluhan aktif',
-                () => onNavigate(_tabComplaints)),
+            if (store.complaintsEnabled)
+              _Stat(
+                  Icons.report_problem,
+                  '${store.complaints.where((c) => c.residentId == rid && c.status != ComplaintStatus.selesai).length}',
+                  'Keluhan aktif',
+                  () => onNavigate(_tabComplaints))
+            else
+              _Stat(
+                  Icons.construction,
+                  '${store.renovations.where((r) => r.residentId == rid && r.isActive).length}',
+                  'Ijin renovasi aktif',
+                  () => _push(context, const RenovationsScreen())),
             _Stat(
                 Icons.badge,
                 '${todayVisitors.where((v) => v.residentId == rid).length}',

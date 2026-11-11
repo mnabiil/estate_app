@@ -17,86 +17,26 @@ class ComplaintsScreen extends StatefulWidget {
 class _ComplaintsScreenState extends State<ComplaintsScreen> {
   ComplaintStatus? _filter;
 
-  void _showDetail(Complaint c) {
-    final r = store.residentById(c.residentId);
-    showModalBottomSheet<void>(
-      context: context,
-      showDragHandle: true,
-      isScrollControlled: true,
-      builder: (ctx) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(c.title, style: Theme.of(ctx).textTheme.titleLarge),
-              const SizedBox(height: 4),
-              Text(
-                  '${c.category} · ${r?.name} (${r?.houseNo}) · ${formatDate(c.createdAt)}',
-                  style: Theme.of(ctx).textTheme.bodySmall),
-              const SizedBox(height: 16),
-              Text(c.description),
-              if (c.photos.isNotEmpty) ...[
-                const SizedBox(height: 16),
-                SizedBox(
-                  height: 96,
-                  child: ListView.separated(
-                    scrollDirection: Axis.horizontal,
-                    itemCount: c.photos.length,
-                    separatorBuilder: (_, __) => const SizedBox(width: 8),
-                    itemBuilder: (_, i) => PhotoThumb(
-                      source: c.photos[i],
-                      onTap: () => Navigator.of(ctx).push(MaterialPageRoute(
-                        builder: (_) =>
-                            PhotoViewer(photos: c.photos, initial: i),
-                      )),
-                    ),
-                  ),
-                ),
-              ],
-              const SizedBox(height: 24),
-              if (store.can(AdminPermission.complaints)) ...[
-                Text('Ubah status', style: Theme.of(ctx).textTheme.labelLarge),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 8,
-                  children: [
-                    for (final s in ComplaintStatus.values)
-                      ChoiceChip(
-                        label: Text(s.label),
-                        selected: c.status == s,
-                        onSelected: (_) async {
-                          Navigator.pop(ctx);
-                          final ok = await confirmSave(context,
-                              title: 'Ubah status keluhan?',
-                              details: {
-                                'Keluhan': c.title,
-                                'Status lama': c.status.label,
-                                'Status baru': s.label,
-                              });
-                          if (!ok || !context.mounted) return;
-                          await runAction(
-                            context,
-                            store.updateComplaintStatus(c.id, s),
-                            success: 'Status keluhan: ${s.label}',
-                          );
-                        },
-                      ),
-                  ],
-                ),
-              ] else
-                Row(
-                  children: [
-                    const Text('Status: '),
-                    StatusChip(c.status.label, complaintColor(c.status)),
-                  ],
-                ),
-            ],
-          ),
-        ),
-      ),
-    );
+  void _showDetail(Complaint c) => Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => ComplaintDetailScreen(complaintId: c.id)));
+
+  Future<void> _toggleFeature(bool enabled) async {
+    final ok = await confirmSave(context,
+        title: enabled ? 'Aktifkan fitur keluhan?' : 'Nonaktifkan fitur keluhan?',
+        details: {
+          'Perumahan': estateName,
+          'Fitur keluhan warga': enabled ? 'Aktif' : 'Nonaktif',
+        },
+        note: enabled
+            ? 'Warga bisa kembali membuat keluhan.'
+            : 'Menu Keluhan disembunyikan dari aplikasi warga dan warga tidak '
+                'bisa membuat keluhan baru. Keluhan lama tetap tersimpan.',
+        action: enabled ? 'Ya, aktifkan' : 'Ya, nonaktifkan');
+    if (!ok || !mounted) return;
+    await runAction(context, store.setComplaintsEnabled(enabled),
+        success: enabled
+            ? 'Fitur keluhan diaktifkan'
+            : 'Fitur keluhan dinonaktifkan untuk warga');
   }
 
   @override
@@ -118,7 +58,7 @@ class _ComplaintsScreenState extends State<ComplaintsScreen> {
         return Scaffold(
           appBar:
               AppBar(title: Text(isAdmin ? 'Keluhan Warga' : 'Keluhan Saya')),
-          floatingActionButton: isAdmin
+          floatingActionButton: isAdmin || !store.complaintsEnabled
               ? null
               : FloatingActionButton.extended(
                   onPressed: () => Navigator.of(context).push(
@@ -130,6 +70,32 @@ class _ComplaintsScreenState extends State<ComplaintsScreen> {
                 ),
           body: Column(
             children: [
+              if (isAdmin &&
+                  (store.can(AdminPermission.complaints) ||
+                      store.can(AdminPermission.masterData)))
+                Card(
+                  margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                  color: store.complaintsEnabled
+                      ? null
+                      : Theme.of(context).colorScheme.errorContainer,
+                  child: SwitchListTile(
+                    value: store.complaintsEnabled,
+                    onChanged: _toggleFeature,
+                    title: const Text('Fitur keluhan untuk warga'),
+                    subtitle: Text(store.complaintsEnabled
+                        ? 'Aktif · warga bisa membuat keluhan'
+                        : 'Nonaktif · menu Keluhan disembunyikan dari warga'),
+                  ),
+                )
+              else if (!isAdmin && !store.complaintsEnabled)
+                Card(
+                  margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                  child: const ListTile(
+                    leading: Icon(Icons.block),
+                    title: Text('Fitur keluhan sedang dinonaktifkan'),
+                    subtitle: Text('Hubungi pengelola secara langsung.'),
+                  ),
+                ),
               FilterBar<ComplaintStatus>(
                 options: {
                   null: 'Semua',
@@ -369,3 +335,292 @@ class _ComplaintFormScreenState extends State<ComplaintFormScreen> {
   }
 }
 
+/// Detail keluhan: isi, foto, dan riwayat penanganan (status, catatan, foto).
+class ComplaintDetailScreen extends StatelessWidget {
+  const ComplaintDetailScreen({super.key, required this.complaintId});
+  final String complaintId;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: store,
+      builder: (context, _) {
+        final c = store.complaints.where((c) => c.id == complaintId).firstOrNull;
+        if (c == null) {
+          return Scaffold(
+            appBar: AppBar(),
+            body: const EmptyState(
+                icon: Icons.report_problem_outlined,
+                message: 'Keluhan tidak ditemukan'),
+          );
+        }
+        final theme = Theme.of(context);
+        final r = store.residentById(c.residentId);
+        final canUpdate = store.can(AdminPermission.complaints);
+        return Scaffold(
+          appBar: AppBar(title: const Text('Detail keluhan')),
+          floatingActionButton: canUpdate
+              ? FloatingActionButton.extended(
+                  onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+                      builder: (_) => ComplaintUpdateScreen(complaint: c))),
+                  icon: const Icon(Icons.edit_note),
+                  label: const Text('Perbarui status'),
+                )
+              : null,
+          body: ListView(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 96),
+            children: [
+              Row(
+                children: [
+                  StatusChip(c.status.label, complaintColor(c.status)),
+                  const SizedBox(width: 8),
+                  Text(c.category, style: theme.textTheme.bodySmall),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Text(c.title,
+                  style: theme.textTheme.titleLarge
+                      ?.copyWith(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 4),
+              Text(
+                  [
+                    if (store.isAdmin) '${r?.name ?? ''} (${r?.houseNo ?? ''})',
+                    '${formatDate(c.createdAt)} ${formatTime(c.createdAt)}',
+                  ].join(' · '),
+                  style: theme.textTheme.bodySmall),
+              const SizedBox(height: 16),
+              Text(c.description, style: theme.textTheme.bodyLarge),
+              if (c.photos.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                PhotoStrip(photos: c.photos),
+              ],
+              const Divider(height: 40),
+              Text('Riwayat penanganan', style: theme.textTheme.titleMedium),
+              const SizedBox(height: 12),
+              _TimelineEntry(
+                status: ComplaintStatus.baru,
+                at: c.createdAt,
+                title: 'Keluhan dibuat',
+                by: r?.name ?? '',
+                last: c.updates.isEmpty,
+              ),
+              for (var i = 0; i < c.updates.length; i++)
+                _TimelineEntry(
+                  status: c.updates[i].status,
+                  at: c.updates[i].at,
+                  title: 'Status: ${c.updates[i].status.label}',
+                  by: c.updates[i].by,
+                  note: c.updates[i].note,
+                  photos: c.updates[i].photos,
+                  last: i == c.updates.length - 1,
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _TimelineEntry extends StatelessWidget {
+  const _TimelineEntry({
+    required this.status,
+    required this.at,
+    required this.title,
+    this.by = '',
+    this.note = '',
+    this.photos = const [],
+    this.last = false,
+  });
+
+  final ComplaintStatus status;
+  final DateTime at;
+  final String title;
+  final String by;
+  final String note;
+  final List<String> photos;
+  final bool last;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final color = complaintColor(status);
+    return IntrinsicHeight(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          SizedBox(
+            width: 24,
+            child: Column(
+              children: [
+                Container(
+                  width: 14,
+                  height: 14,
+                  margin: const EdgeInsets.only(top: 3),
+                  decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+                ),
+                if (!last)
+                  Expanded(
+                    child: Container(
+                        width: 2, color: theme.colorScheme.outlineVariant),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: 20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title,
+                      style: theme.textTheme.titleSmall
+                          ?.copyWith(fontWeight: FontWeight.bold)),
+                  Text(
+                      [
+                        '${formatDate(at)} ${formatTime(at)}',
+                        if (by.isNotEmpty) by,
+                      ].join(' · '),
+                      style: theme.textTheme.bodySmall),
+                  if (note.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    Text(note),
+                  ],
+                  if (photos.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    PhotoStrip(photos: photos),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Pengelola memperbarui penanganan keluhan: status, catatan, foto.
+class ComplaintUpdateScreen extends StatefulWidget {
+  const ComplaintUpdateScreen({super.key, required this.complaint});
+  final Complaint complaint;
+
+  @override
+  State<ComplaintUpdateScreen> createState() => _ComplaintUpdateScreenState();
+}
+
+class _ComplaintUpdateScreenState extends State<ComplaintUpdateScreen> {
+  late ComplaintStatus _status = widget.complaint.status;
+  final _note = TextEditingController();
+  final List<XFile> _photos = [];
+  bool _saving = false;
+
+  @override
+  void dispose() {
+    _note.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final c = widget.complaint;
+    if (_status == c.status && _note.text.trim().isEmpty && _photos.isEmpty) {
+      showSnack(context, 'Ubah status atau isi catatan/foto.');
+      return;
+    }
+    final ok = await confirmSave(context,
+        title: 'Perbarui keluhan?',
+        details: {
+          'Keluhan': c.title,
+          'Status': _status == c.status
+              ? _status.label
+              : '${c.status.label} → ${_status.label}',
+          'Catatan': _note.text,
+          'Foto': _photos.isEmpty ? 'Tanpa foto' : '${_photos.length} foto',
+        },
+        note: 'Catatan & foto bisa dilihat warga pelapor.');
+    if (!ok || !mounted) return;
+    setState(() => _saving = true);
+    final done = await runAction(
+      context,
+      store
+          .updateComplaintStatus(c.id, _status,
+              note: _note.text, photos: _photos)
+          .then((_) => true),
+      success: 'Keluhan diperbarui: ${_status.label}',
+    );
+    if (!mounted) return;
+    if (done == true) {
+      Navigator.pop(context);
+    } else {
+      setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Scaffold(
+      appBar: AppBar(title: const Text('Perbarui status')),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          Text(widget.complaint.title, style: theme.textTheme.titleMedium),
+          const SizedBox(height: 16),
+          Text('Status', style: theme.textTheme.labelLarge),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            children: [
+              for (final s in ComplaintStatus.values)
+                ChoiceChip(
+                  label: Text(s.label),
+                  selected: _status == s,
+                  onSelected: (_) => setState(() => _status = s),
+                ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          TextField(
+            controller: _note,
+            minLines: 3,
+            maxLines: 8,
+            maxLength: 1000,
+            textCapitalization: TextCapitalization.sentences,
+            decoration: const InputDecoration(
+              labelText: 'Catatan penanganan',
+              hintText: 'Contoh: teknisi sudah mengganti lampu jalan',
+              alignLabelWithHint: true,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text('Foto (maks. $maxComplaintPhotos)',
+              style: theme.textTheme.labelLarge),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (var i = 0; i < _photos.length; i++)
+                RemovablePhoto(
+                  source: _photos[i].path,
+                  onRemove: () => setState(() => _photos.removeAt(i)),
+                ),
+              if (_photos.length < maxComplaintPhotos)
+                AddPhotoButton(onPressed: () async {
+                  final p = await pickPhoto(context);
+                  if (p != null && mounted) setState(() => _photos.add(p));
+                }),
+            ],
+          ),
+          const SizedBox(height: 24),
+          FilledButton.icon(
+            onPressed: _saving ? null : _submit,
+            icon: const Icon(Icons.save_outlined),
+            label: const Text('Simpan'),
+          ),
+        ],
+      ),
+    );
+  }
+}
