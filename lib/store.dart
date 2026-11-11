@@ -396,13 +396,71 @@ class EstateStore extends ChangeNotifier {
   /// diambil lagi dari server; mode demo: tampilan diperbarui.
   Future<void> refresh() async {
     final user = currentUser;
-    if (isFirebase &&
-        user != null &&
-        user.role != Role.pendaftar &&
-        _estateId != null) {
-      _listen();
+    if (!isFirebase ||
+        user == null ||
+        user.role == Role.pendaftar ||
+        _estateId == null) {
+      notifyListeners();
+      return;
     }
+    // Profil dibaca ulang dari server: akses perumahan baru, rumah baru,
+    // foto profil, dll. ikut diperbarui tanpa login ulang.
+    final uid = _auth!.currentUser?.uid;
+    if (uid != null) {
+      try {
+        final snap = await _db!
+            .collection('users')
+            .doc(uid)
+            .get(const GetOptions(source: Source.server))
+            .timeout(const Duration(seconds: 10));
+        final d = snap.data();
+        if (d != null) _applyProfileRefresh(d);
+      } catch (e) {
+        debugPrint('Refresh profil gagal (offline?): $e');
+      }
+    }
+    _listen();
     notifyListeners();
+  }
+
+  void _applyProfileRefresh(Map<String, dynamic> d) {
+    profilePhotoUrl = d['photoUrl'] as String?;
+    final user = currentUser!;
+    Set<String> ids;
+    if (user.role == Role.pengelola) {
+      ids = {
+        if (d['estateId'] is String) d['estateId'] as String,
+        ...((d['estateIds'] as List<dynamic>?) ?? const []).whereType<String>(),
+      };
+    } else {
+      final hs = HomeRef.fromProfile(d);
+      if (hs.isEmpty) return;
+      homes
+        ..clear()
+        ..addAll(hs);
+      ids = {for (final h in hs) h.estateId};
+      final active = hs.where((h) => h.key == _activeHomeKey).firstOrNull ??
+          hs.first;
+      _activeHomeKey = active.key;
+      if (active.estateId != _estateId) {
+        _estateId = active.estateId;
+        _clearData();
+      }
+      currentUser = user.forHome(active);
+    }
+    if (ids.isEmpty) return;
+    for (final id in ids) {
+      if (!estates.any((e) => e.id == id)) {
+        estates.add(EstateInfo(id: id, name: 'Perumahan'));
+        _watchEstateName(id);
+      }
+    }
+    estates.removeWhere((e) => !ids.contains(e.id));
+    if (!ids.contains(_estateId)) {
+      _estateId = estates.first.id;
+      _clearData();
+    }
+    estateName = estateNameOf(_estateId!);
   }
 
   void _onStreamError(Object e) {

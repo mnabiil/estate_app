@@ -37,13 +37,35 @@ Color complaintColor(ComplaintStatus s) => switch (s) {
     };
 
 class EmptyState extends StatelessWidget {
-  const EmptyState({super.key, required this.icon, required this.message});
+  const EmptyState({
+    super.key,
+    required this.icon,
+    required this.message,
+    this.scrollable = false,
+  });
 
   final IconData icon;
   final String message;
 
+  /// true: bisa ditarik ke bawah untuk refresh (dipakai sebagai isi daftar
+  /// yang dibungkus RefreshIndicator).
+  final bool scrollable;
+
   @override
   Widget build(BuildContext context) {
+    if (scrollable) {
+      return LayoutBuilder(
+        builder: (context, c) => ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          children: [
+            ConstrainedBox(
+              constraints: BoxConstraints(minHeight: c.maxHeight),
+              child: EmptyState(icon: icon, message: message),
+            ),
+          ],
+        ),
+      );
+    }
     final color = Theme.of(context).colorScheme.outline;
     return Center(
       child: Padding(
@@ -630,4 +652,14 @@ Future<void> changeProfilePhoto(BuildContext context) async {
   if (ok != true || !context.mounted) return;
   await runAction(context, store.setProfilePhoto(photo),
       success: 'Foto profil diperbarui');
+}
+
+/// Semua daftar selalu bisa ditarik (overscroll) walau isinya sedikit,
+/// agar "tarik ke bawah untuk refresh" berfungsi di setiap layar.
+class AppScrollBehavior extends MaterialScrollBehavior {
+  const AppScrollBehavior();
+
+  @override
+  ScrollPhysics getScrollPhysics(BuildContext context) =>
+      AlwaysScrollableScrollPhysics(parent: super.getScrollPhysics(context));
 }

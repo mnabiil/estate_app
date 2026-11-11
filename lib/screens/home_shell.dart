@@ -68,8 +68,12 @@ class _HomeShellState extends State<HomeShell> {
     }
   }
 
+  // Ikut diperbarui setiap data di store berubah.
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => ListenableBuilder(
+      listenable: store, builder: (context, _) => _build(context));
+
+  Widget _build(BuildContext context) {
     final tabs = <_Tab>[
       _Tab('Beranda', Icons.home_outlined, Icons.home,
           DashboardScreen(onNavigate: _goToTab)),

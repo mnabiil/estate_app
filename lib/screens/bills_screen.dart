@@ -130,6 +130,7 @@ class _BillsScreenState extends State<BillsScreen> {
               Expanded(
                 child: list.isEmpty
                     ? const EmptyState(
+                        scrollable: true,
                         icon: Icons.receipt_long, message: 'Tidak ada tagihan')
                     : ListView.separated(
                         itemCount: list.length,

@@ -54,8 +54,11 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
                   ),
                 ),
               Expanded(
-                child: list.isEmpty
+                child: RefreshIndicator(
+                  onRefresh: store.refresh,
+                  child: list.isEmpty
                     ? EmptyState(
+                        scrollable: true,
                         icon: Icons.how_to_reg_outlined,
                         message: _history
                             ? 'Belum ada riwayat pendaftaran.'
@@ -66,6 +69,7 @@ class _RegistrationsScreenState extends State<RegistrationsScreen> {
                         itemCount: list.length,
                         itemBuilder: (context, i) => _RegistrationCard(list[i]),
                       ),
+                ),
               ),
             ],
           ),

@@ -162,23 +162,24 @@ class _RenovationsScreenState extends State<RenovationsScreen> {
                 onChanged: (v) => setState(() => _filter = v ?? _Filter.semua),
               ),
               Expanded(
-                child: list.isEmpty
-                    ? EmptyState(
-                        icon: Icons.construction,
-                        message: isAdmin
-                            ? 'Tidak ada ijin renovasi.'
-                            : 'Belum ada ijin renovasi.\n'
-                                'Ajukan sebelum memulai pekerjaan renovasi.',
-                      )
-                    : RefreshIndicator(
-                        onRefresh: store.refresh,
-                        child: ListView.builder(
+                child: RefreshIndicator(
+                  onRefresh: store.refresh,
+                  child: list.isEmpty
+                      ? EmptyState(
+                          scrollable: true,
+                          icon: Icons.construction,
+                          message: isAdmin
+                              ? 'Tidak ada ijin renovasi.'
+                              : 'Belum ada ijin renovasi.\n'
+                                  'Ajukan sebelum memulai pekerjaan renovasi.',
+                        )
+                      : ListView.builder(
                           padding: const EdgeInsets.fromLTRB(16, 4, 16, 96),
                           itemCount: list.length,
                           itemBuilder: (context, i) =>
                               _RenovationCard(list[i], showResident: isAdmin),
                         ),
-                      ),
+                ),
               ),
             ],
           ),

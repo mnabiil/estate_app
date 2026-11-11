@@ -10,6 +10,7 @@ import 'screens/password_screen.dart';
 import 'screens/register_screen.dart';
 import 'store.dart';
 import 'theme.dart';
+import 'widgets.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -31,6 +32,7 @@ class EstateApp extends StatelessWidget {
     return MaterialApp(
       title: 'Amani Living',
       debugShowCheckedModeBanner: false,
+      scrollBehavior: const AppScrollBehavior(),
       // Banner notifikasi push saat aplikasi terbuka.
       scaffoldMessengerKey: PushService.instance.messengerKey,
       theme: buildTheme(Brightness.light),

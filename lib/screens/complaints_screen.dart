@@ -107,6 +107,7 @@ class _ComplaintsScreenState extends State<ComplaintsScreen> {
               Expanded(
                 child: list.isEmpty
                     ? const EmptyState(
+                        scrollable: true,
                         icon: Icons.sentiment_satisfied_alt,
                         message: 'Belum ada keluhan',
                       )

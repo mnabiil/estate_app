@@ -433,6 +433,7 @@ class _ResidentsScreenState extends State<ResidentsScreen> {
               Expanded(
                 child: list.isEmpty
                     ? const EmptyState(
+                        scrollable: true,
                         icon: Icons.person_search,
                         message: 'Warga tidak ditemukan')
                     : ListView.builder(
