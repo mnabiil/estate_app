@@ -8,6 +8,7 @@ import 'household_screen.dart';
 import 'master_data_screen.dart';
 import 'notification_settings_screen.dart';
 import 'password_screen.dart';
+import 'prayer_screen.dart';
 import 'registrations_screen.dart';
 import 'renovations_screen.dart';
 import 'staff_screen.dart';
@@ -123,6 +124,13 @@ class AccountScreen extends StatelessWidget {
               onTap: () =>
                   push(HouseholdScreen(residentId: user.residentId!)),
             ),
+          ListTile(
+            leading: const Icon(Icons.mosque_outlined),
+            title: const Text('Jadwal sholat & adzan'),
+            subtitle: const Text('Waktu sholat, notifikasi adzan, arah kiblat'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => push(const PrayerScreen()),
+          ),
           ListTile(
             leading: const Icon(Icons.construction),
             title: const Text('Ijin renovasi'),

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../prayer/prayer_service.dart';
 import '../push.dart';
 import '../store.dart';
 import 'announcements_screen.dart';
@@ -7,6 +8,7 @@ import 'account_screen.dart';
 import 'bills_screen.dart';
 import 'complaints_screen.dart';
 import 'dashboard_screen.dart';
+import 'prayer_screen.dart';
 import 'residents_screen.dart';
 import 'visitors_screen.dart';
 
@@ -25,7 +27,7 @@ class _Tab {
   final Widget page;
 }
 
-class _HomeShellState extends State<HomeShell> {
+class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
   int _index = 0;
 
   void _goTo(int i) => setState(() => _index = i);
@@ -43,13 +45,35 @@ class _HomeShellState extends State<HomeShell> {
   void initState() {
     super.initState();
     PushService.instance.target.addListener(_onPushTarget);
+    WidgetsBinding.instance.addObserver(this);
     // Aplikasi dibuka dari notifikasi sebelum layar ini tampil.
-    WidgetsBinding.instance.addPostFrameCallback((_) => _onPushTarget());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _onPushTarget();
+      _startPrayer();
+    });
+  }
+
+  /// Muat pengaturan adzan akun ini; login pertama warga: tawarkan adzan.
+  Future<void> _startPrayer() async {
+    final key = store.accountKey;
+    if (key == null) return;
+    await PrayerService.instance.attach(key);
+    if (mounted) await offerAdzanIfNeeded(context);
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Aplikasi dibuka lagi: jadwal adzan diperpanjang beberapa hari ke depan.
+    if (state == AppLifecycleState.resumed &&
+        PrayerService.instance.settings.enabled) {
+      PrayerService.instance.reschedule();
+    }
   }
 
   @override
   void dispose() {
     PushService.instance.target.removeListener(_onPushTarget);
+    WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
 

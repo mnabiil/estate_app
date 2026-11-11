@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Suara adzan dipakai lewat nama (notifikasi), jangan dibuang saat build release. -->
+<resources xmlns:tools="http://schemas.android.com/tools"
+    tools:keep="@raw/adzan_*" />

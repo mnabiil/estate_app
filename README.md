@@ -87,6 +87,34 @@ Sekali saja setelah deploy hosting: Firebase Console → Authentication → **Te
 reset → ✏️ → *Customize action URL* →
 `https://estate-management-app-98b57.web.app/auth-action` → Save.
 
+## Jadwal sholat & adzan
+
+Akun → **Jadwal sholat & adzan** (juga kartu "Sholat berikutnya" di Beranda).
+
+- **Waktu**: Imsak, Subuh, Syuruq, Dzuhur, Ashar, Maghrib, Isya, dan awal **sepertiga malam
+  terakhir** (2/3 malam setelah Maghrib). Dihitung **offline di HP** dari **lokasi GPS**
+  pengguna (`lib/prayer/prayer_times.dart`; sudah diuji terhadap pustaka referensi, selisih
+  < 1 menit). Bila GPS ditolak: lokasi terakhir, atau Jakarta.
+- **Metode**: Kemenag RI (default, ihtiyat 2 menit), JAKIM, MUIS, Muslim World League,
+  Umm al-Qura, Mesir, Karachi, ISNA; Ashar Jumhur/Hanafi; koreksi tanggal Hijriah ±2 hari.
+- **Notifikasi adzan** (lokal, terjadwal 7 hari ke depan di Android / 3 hari di iOS, dijadwalkan
+  ulang setiap aplikasi dibuka): warga memilih **waktu mana yang diberi adzan**, pengingat
+  imsak/syuruq/sepertiga malam, pengingat X menit sebelum sholat, serta **suara adzan** (terpisah
+  untuk Subuh). Pengaturan disimpan per akun di perangkat.
+- **Login pertama** warga (setelah pendaftaran disetujui / akun dibuat): muncul pertanyaan
+  "Aktifkan notifikasi adzan?".
+- **Fase 3**: jadwal bulanan & **imsakiyah Ramadhan**, **arah kiblat** (kompas magnetometer),
+  **info masjid/musholla** perumahan (diisi pengelola berhak master data: `estates/{e}.mosque`).
+
+**Menambah suara adzan**: salin file ke `android/app/src/main/res/raw/adzan_<nama>.mp3` (huruf
+kecil/garis bawah); untuk iOS konversi ke `.caf` ≤ 30 detik dan tambahkan ke target Runner;
+lalu daftarkan di `lib/prayer/adzan_sounds.dart`. Suara notifikasi Android tidak bisa diubah
+setelah kanal dibuat, karena itu setiap suara punya kanal sendiri (`adzan_<id>`).
+
+**Android**: izin lokasi, notifikasi, alarm tepat waktu (Android 12+; bisa diizinkan dari
+Pengaturan adzan) dan jalan setelah restart sudah ada di manifest. Beberapa merek HP perlu
+baterai "Tanpa batasan" agar adzan tepat waktu.
+
 ## Keluhan
 
 Warga membuat keluhan (maks. 3 foto). Pengelola (hak keluhan) membuka detail → **Perbarui status**:

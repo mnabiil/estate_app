@@ -133,6 +133,15 @@ service cloud.firestore {
           && onlyChanges(['bankAccounts'])
           && request.resource.data.bankAccounts is list
           && request.resource.data.bankAccounts.size() <= 5)
+        // Info masjid / musholla perumahan (jadwal sholat).
+        || (can(estateId, 'masterData')
+          && onlyChanges(['mosque'])
+          && request.resource.data.mosque is map
+          && request.resource.data.mosque.keys().hasOnly(['name', 'info'])
+          && request.resource.data.mosque.name is string
+          && request.resource.data.mosque.name.size() <= 100
+          && request.resource.data.mosque.info is string
+          && request.resource.data.mosque.info.size() <= 1000)
         // Fitur keluhan warga dinyalakan / dimatikan.
         || ((can(estateId, 'complaints') || can(estateId, 'masterData'))
           && onlyChanges(['complaintsEnabled'])
