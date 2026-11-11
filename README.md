@@ -106,6 +106,11 @@ Akun → **Jadwal sholat & adzan** (juga kartu "Sholat berikutnya" di Beranda).
 - **Fase 3**: jadwal bulanan & **imsakiyah Ramadhan**, **arah kiblat** (kompas magnetometer),
   **info masjid/musholla** perumahan (diisi pengelola berhak master data: `estates/{e}.mosque`).
 
+**Suara adzan tersedia**: Adzan Makkah (bawaan), Adzan Madinah, Adzan Misyari Rasyid, dan
+bunyi notifikasi biasa. Android memutar adzan penuh (MP3 mono 64 kbps, volume dinormalkan);
+iPhone memutar potongan 30 detik (batas iOS) dari `assets/adzan/*.caf`, yang disalin otomatis ke
+`Library/Sounds` saat aplikasi dibuka.
+
 **Menambah suara adzan**: salin file ke `android/app/src/main/res/raw/adzan_<nama>.mp3` (huruf
 kecil/garis bawah); untuk iOS konversi ke `.caf` ≤ 30 detik dan tambahkan ke target Runner;
 lalu daftarkan di `lib/prayer/adzan_sounds.dart`. Suara notifikasi Android tidak bisa diubah

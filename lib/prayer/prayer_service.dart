@@ -1,9 +1,11 @@
 import 'dart:convert';
-import 'dart:io' show Platform;
+import 'dart:io' show Directory, File, Platform;
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:timezone/timezone.dart' as tz;
 
@@ -27,8 +29,8 @@ class PrayerSettings {
   /// Waktu yang diberi notifikasi. Sholat wajib: adzan; imsak, syuruq,
   /// sepertiga malam: pengingat biasa.
   Set<PrayerTime> active = {...PrayerTime.fard};
-  String soundId = defaultAdzanSound.id;
-  String subuhSoundId = defaultAdzanSound.id;
+  String soundId = initialAdzanSoundId;
+  String subuhSoundId = initialAdzanSoundId;
 
   /// Pengingat sebelum waktu sholat wajib (0 = tidak ada).
   int reminderMinutes = 0;
@@ -67,8 +69,8 @@ class PrayerSettings {
       for (final v in (m['active'] as List<dynamic>? ?? const []))
         if (PrayerTime.values.asNameMap()[v] case final p?) p,
     }
-    ..soundId = m['soundId'] as String? ?? defaultAdzanSound.id
-    ..subuhSoundId = m['subuhSoundId'] as String? ?? defaultAdzanSound.id
+    ..soundId = m['soundId'] as String? ?? initialAdzanSoundId
+    ..subuhSoundId = m['subuhSoundId'] as String? ?? initialAdzanSoundId
     ..reminderMinutes = (m['reminderMinutes'] as num?)?.toInt() ?? 0
     ..hijriAdjust = (m['hijriAdjust'] as num?)?.toInt() ?? 0
     ..latitude = (m['latitude'] as num?)?.toDouble()
@@ -234,6 +236,28 @@ class PrayerService extends ChangeNotifier {
       ),
     );
     _pluginReady = true;
+    await _installIosSounds();
+  }
+
+  /// iOS memutar suara notifikasi dari Library/Sounds milik aplikasi: salin
+  /// potongan adzan dari aset ke sana (sekali; tidak perlu ubah proyek Xcode).
+  Future<void> _installIosSounds() async {
+    if (!Platform.isIOS) return;
+    try {
+      final dir = Directory('${(await getLibraryDirectory()).path}/Sounds');
+      await dir.create(recursive: true);
+      for (final s in adzanSounds) {
+        final name = s.iosFile;
+        if (name == null) continue;
+        final file = File('${dir.path}/$name');
+        if (await file.exists()) continue;
+        final data = await rootBundle.load('assets/adzan/$name');
+        await file.writeAsBytes(
+            data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes));
+      }
+    } catch (e) {
+      debugPrint('Salin suara adzan iOS: $e');
+    }
   }
 
   /// Izin notifikasi (Android 13+/iOS) & alarm tepat waktu (Android 12+).
