@@ -30,7 +30,7 @@ class PrayerSettings {
   /// sepertiga malam: pengingat biasa.
   Set<PrayerTime> active = {...PrayerTime.fard};
   String soundId = initialAdzanSoundId;
-  String subuhSoundId = initialAdzanSoundId;
+  String subuhSoundId = initialSubuhSoundId;
 
   /// Pengingat sebelum waktu sholat wajib (0 = tidak ada).
   int reminderMinutes = 0;
@@ -70,7 +70,7 @@ class PrayerSettings {
         if (PrayerTime.values.asNameMap()[v] case final p?) p,
     }
     ..soundId = m['soundId'] as String? ?? initialAdzanSoundId
-    ..subuhSoundId = m['subuhSoundId'] as String? ?? initialAdzanSoundId
+    ..subuhSoundId = m['subuhSoundId'] as String? ?? initialSubuhSoundId
     ..reminderMinutes = (m['reminderMinutes'] as num?)?.toInt() ?? 0
     ..hijriAdjust = (m['hijriAdjust'] as num?)?.toInt() ?? 0
     ..latitude = (m['latitude'] as num?)?.toDouble()

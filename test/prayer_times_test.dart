@@ -1,3 +1,4 @@
+import 'package:estate_app/prayer/adzan_sounds.dart';
 import 'package:estate_app/prayer/prayer_service.dart';
 import 'package:estate_app/prayer/prayer_times.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -137,4 +138,18 @@ void main() {
         {PrayerTime.subuh, PrayerTime.maghrib, PrayerTime.sepertigaMalam});
     expect(p.settings.reminderMinutes, 10);
   });
+
+  test('suara adzan: Subuh khusus hanya untuk waktu Subuh; bawaan', () {
+    final subuhOnly = adzanSounds.where((s) => s.subuhOnly).map((s) => s.id);
+    expect(subuhOnly, ['subuh_madinah']);
+    final settings = PrayerSettings();
+    expect(settings.soundId, 'makkah');
+    expect(settings.subuhSoundId, 'subuh_madinah');
+    expect(adzanSoundById('tidak-ada').id, 'default');
+    for (final s in adzanSounds.where((s) => !s.isDefault)) {
+      expect(s.androidRaw, startsWith('adzan_'));
+      expect(s.iosFile, endsWith('.caf'));
+    }
+  });
 }
+

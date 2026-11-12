@@ -107,7 +107,8 @@ Akun → **Jadwal sholat & adzan** (juga kartu "Sholat berikutnya" di Beranda).
   **info masjid/musholla** perumahan (diisi pengelola berhak master data: `estates/{e}.mosque`).
 
 **Suara adzan tersedia**: Adzan Makkah (bawaan), Adzan Madinah, Adzan Misyari Rasyid, dan
-bunyi notifikasi biasa. Android memutar adzan penuh (MP3 mono 64 kbps, volume dinormalkan);
+bunyi notifikasi biasa; khusus Subuh: Adzan Subuh Madinah – Muhammad Marwan Qassas (bawaan
+Subuh, hanya bisa dipilih untuk waktu Subuh). Android memutar adzan penuh (MP3 mono 64 kbps, volume dinormalkan);
 iPhone memutar potongan 30 detik (batas iOS) dari `assets/adzan/*.caf`, yang disalin otomatis ke
 `Library/Sounds` saat aplikasi dibuka.
 

@@ -728,7 +728,8 @@ class PrayerSettingsScreen extends StatelessWidget {
                     child: ListView(
                       shrinkWrap: true,
                       children: [
-                        for (final a in adzanSounds)
+                        for (final a in adzanSounds
+                            .where((a) => subuh || !a.subuhOnly))
                           ListTile(
                             leading: Icon(a.id == value
                                 ? Icons.radio_button_checked
@@ -741,12 +742,6 @@ class PrayerSettingsScreen extends StatelessWidget {
                                   _prayer.testSound(a.id, subuh: subuh),
                             ),
                             onTap: () => Navigator.pop(ctx, a.id),
-                          ),
-                        if (adzanSounds.length == 1)
-                          const ListTile(
-                            leading: Icon(Icons.info_outline),
-                            title: Text('Suara adzan lain segera ditambahkan '
-                                'pengelola aplikasi.'),
                           ),
                       ],
                     ),
