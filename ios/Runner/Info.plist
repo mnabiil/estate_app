@@ -6,6 +6,8 @@
 	<array>
 		<string>remote-notification</string>
 	</array>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Lokasi dipakai untuk menghitung jadwal sholat dan arah kiblat.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Kamera dipakai untuk memotret kondisi yang dikeluhkan.</string>
 	<key>NSPhotoLibraryUsageDescription</key>

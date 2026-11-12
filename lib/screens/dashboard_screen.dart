@@ -7,6 +7,7 @@ import '../utils.dart';
 import '../widgets.dart';
 import 'announcements_screen.dart';
 import 'master_data_screen.dart';
+import 'prayer_screen.dart';
 import 'renovations_screen.dart';
 import 'visitors_screen.dart';
 
@@ -156,6 +157,8 @@ class DashboardScreen extends StatelessWidget {
                 const OtherEstatePendingBanner(
                     margin: EdgeInsets.only(bottom: 16)),
                 _HeroCard(stat: hero, isAdmin: store.isAdmin),
+                const SizedBox(height: 12),
+                const NextPrayerCard(),
                 const SizedBox(height: 28),
                 Text('Ringkasan',
                     style: theme.textTheme.titleLarge

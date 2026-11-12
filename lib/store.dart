@@ -10,6 +10,7 @@ import 'package:image_picker/image_picker.dart';
 
 import 'import_plan.dart';
 import 'models.dart';
+import 'prayer/prayer_service.dart';
 import 'push.dart';
 import 'utils.dart';
 
@@ -81,6 +82,12 @@ class EstateStore extends ChangeNotifier {
 
   /// Fitur keluhan untuk warga perumahan aktif (bisa dimatikan pengelola).
   bool complaintsEnabled = true;
+
+  /// Masjid / musholla perumahan (ditampilkan di Jadwal Sholat).
+  String mosqueName = '';
+
+  /// Info masjid: jadwal Jumat, kajian, dll.
+  String mosqueInfo = '';
 
   /// Preferensi notifikasi push akun ini.
   bool notifyAnnouncements = true;
@@ -294,6 +301,9 @@ class EstateStore extends ChangeNotifier {
       estateAddress = d['address'] as String? ?? '';
       registrationOpen = d['registrationOpen'] as bool? ?? true;
       complaintsEnabled = d['complaintsEnabled'] as bool? ?? true;
+      final mosque = d['mosque'] is Map ? d['mosque'] as Map : const {};
+      mosqueName = mosque['name'] as String? ?? '';
+      mosqueInfo = mosque['info'] as String? ?? '';
       bankAccounts
         ..clear()
         ..addAll(BankAccount.listFrom(d['bankAccounts']));
@@ -1004,6 +1014,8 @@ class EstateStore extends ChangeNotifier {
       _auth!.sendPasswordResetEmail(email: email);
 
   Future<void> logout() async {
+    // Notifikasi adzan akun ini berhenti di perangkat ini.
+    unawaited(PrayerService.instance.detach());
     currentUser = null;
     profilePhotoUrl = null;
     homes.clear();
@@ -3110,6 +3122,32 @@ class EstateStore extends ChangeNotifier {
     });
   }
 
+  /// Pengelola (hak master data) mengatur info masjid / musholla perumahan.
+  Future<void> saveMosqueInfo(String name, String info) async {
+    _require(AdminPermission.masterData);
+    name = name.trim();
+    info = info.trim();
+    if (name.length > 100) throw StateError('Nama maksimal 100 karakter.');
+    if (info.length > 1000) throw StateError('Info maksimal 1000 karakter.');
+    if (!isFirebase) {
+      mosqueName = name;
+      mosqueInfo = info;
+      notifyListeners();
+      return;
+    }
+    await _est.update({
+      'mosque': {'name': name, 'info': info},
+    });
+  }
+
+  /// Kunci akun untuk pengaturan per perangkat (adzan, dll.).
+  String? get accountKey {
+    final user = currentUser;
+    if (user == null) return null;
+    if (isFirebase) return _auth!.currentUser?.uid;
+    return '${user.role.name}/${user.email ?? user.name}';
+  }
+
   /// Pengelola menyalakan / mematikan fitur keluhan untuk warga.
   Future<void> setComplaintsEnabled(bool enabled) async {
     if (!can(AdminPermission.complaints) && !can(AdminPermission.masterData)) {
@@ -3546,6 +3584,9 @@ class EstateStore extends ChangeNotifier {
     ];
     // Dua perumahan contoh. Perumahan pertama berisi data lengkap.
     _estateId = 'griya-asri';
+    mosqueName = 'Masjid Al-Ikhlas Griya Asri';
+    mosqueInfo = 'Sholat Jumat 11.45 WIB · Kajian Ahad pagi ba\'da Subuh · '
+        'Kotak infaq di pos satpam.';
     estates.addAll([
       EstateInfo(id: 'griya-asri', name: estateName),
       EstateInfo(id: 'amani-residence', name: 'Amani Residence'),
@@ -3768,6 +3809,8 @@ class _DemoEstate {
         ..depositLarge = s.depositLarge
         ..registrationOpen = s.registrationOpen
         ..complaintsEnabled = s.complaintsEnabled
+        ..mosqueName = s.mosqueName
+        ..mosqueInfo = s.mosqueInfo
         ..billDueDay = s.billDueDay
         ..registrations.addAll(s.registrations)
         ..members.addAll(s.members)
@@ -3783,6 +3826,8 @@ class _DemoEstate {
   int depositLarge = defaultDepositLarge;
   bool registrationOpen = true;
   bool complaintsEnabled = true;
+  String mosqueName = '';
+  String mosqueInfo = '';
   int billDueDay = defaultBillDueDay;
   final registrations = <Registration>[];
   final members = <HouseholdMember>[];
@@ -3821,6 +3866,8 @@ class _DemoEstate {
     s.depositLarge = depositLarge;
     s.registrationOpen = registrationOpen;
     s.complaintsEnabled = complaintsEnabled;
+    s.mosqueName = mosqueName;
+    s.mosqueInfo = mosqueInfo;
     s.billDueDay = billDueDay;
     s.registrations.addAll(registrations);
     s.members.addAll(members);
